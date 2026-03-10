@@ -226,6 +226,18 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
+## Agent Skill
+
+This project ships an [Agent Skill](https://github.com/vercel-labs/skills) for use with Claude Code, Cursor, and other compatible agents.
+
+**Install:**
+
+```sh
+npx skills add urmzd/agent-sdk
+```
+
+Once installed, use `/agent-sdk` to build streaming LLM agent loops with typed deltas, tools, and sub-agents.
+
 ## Architecture
 
 | File | Purpose |
