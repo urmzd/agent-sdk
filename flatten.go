@@ -1,0 +1,96 @@
+package agentsdk
+
+import "fmt"
+
+// AnnotatedMessage pairs a message with its tree metadata.
+type AnnotatedMessage struct {
+	Message  Message
+	NodeID   NodeID
+	Path     TreePath
+	Depth    int
+	BranchID BranchID
+	State    NodeState
+}
+
+// Flatten walks the path from root to the given node and collects messages.
+// Archived nodes are skipped. Compacted nodes contribute their summary message.
+func (t *Tree) Flatten(toNodeID NodeID) ([]Message, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	path, err := t.pathUnlocked(toNodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	messages := make([]Message, 0, len(path))
+	for _, nid := range path {
+		node := t.nodes[nid]
+		switch node.State {
+		case NodeArchived:
+			continue
+		default:
+			messages = append(messages, node.Message)
+		}
+	}
+	return messages, nil
+}
+
+// FlattenBranch flattens the path from root to the tip of the given branch.
+func (t *Tree) FlattenBranch(branch BranchID) ([]Message, error) {
+	t.mu.RLock()
+	tipID, ok := t.branches[branch]
+	t.mu.RUnlock()
+
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrBranchNotFound, branch)
+	}
+	return t.Flatten(tipID)
+}
+
+// FlattenAnnotated walks the path from root to the given node and returns
+// annotated messages with full metadata. Archived nodes are skipped.
+// Compacted nodes are included with State: NodeCompacted.
+func (t *Tree) FlattenAnnotated(toNodeID NodeID) ([]AnnotatedMessage, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	path, err := t.pathUnlocked(toNodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]AnnotatedMessage, 0, len(path))
+	for _, nid := range path {
+		node := t.nodes[nid]
+		if node.State == NodeArchived {
+			continue
+		}
+		tp, err := t.nodePathUnlocked(nid)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, AnnotatedMessage{
+			Message:  node.Message,
+			NodeID:   node.ID,
+			Path:     tp,
+			Depth:    node.Depth,
+			BranchID: node.BranchID,
+			State:    node.State,
+		})
+	}
+	return result, nil
+}
+
+// FlattenBranchAnnotated flattens the path from root to the tip of the given
+// branch, returning annotated messages.
+func (t *Tree) FlattenBranchAnnotated(branch BranchID) ([]AnnotatedMessage, error) {
+	t.mu.RLock()
+	tipID, ok := t.branches[branch]
+	t.mu.RUnlock()
+
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrBranchNotFound, branch)
+	}
+	return t.FlattenAnnotated(tipID)
+}
