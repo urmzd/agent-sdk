@@ -399,7 +399,7 @@ type mockProvider struct {
 	response string
 }
 
-func (m *mockProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
+func (m *mockProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
 	ch := make(chan Delta, 3)
 	ch <- TextStartDelta{}
 	ch <- TextContentDelta{Content: m.response}
@@ -642,7 +642,7 @@ func TestInvokeAutoCreatesTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FlattenBranch: %v", err)
 	}
-	if len(msgs) != 3 {
+	if len(msgs) != 3 { // system + user + assistant
 		t.Fatalf("messages = %d, want 3", len(msgs))
 	}
 }

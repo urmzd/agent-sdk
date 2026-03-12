@@ -113,7 +113,7 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 		NewUserMessage(summaryText),
 	}
 
-	rx, err := provider.ChatStream(ctx, summaryReq, nil)
+	rx, err := provider.ChatStream(ctx, summaryReq, nil, "")
 	if err != nil {
 		return "", fmt.Errorf("summarization: %w", err)
 	}
