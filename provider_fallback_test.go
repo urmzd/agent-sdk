@@ -11,7 +11,7 @@ func TestFallbackProvider_FirstSucceeds(t *testing.T) {
 	p2 := &mockProvider{response: "from-backup"}
 
 	fb := NewFallbackProvider(p1, p2)
-	ch, err := fb.ChatStream(context.Background(), nil, nil, "")
+	ch, err := fb.ChatStream(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestFallbackProvider_FallsBackOnError(t *testing.T) {
 	good := &mockProvider{response: "from-backup"}
 
 	fb := NewFallbackProvider(failing, good)
-	ch, err := fb.ChatStream(context.Background(), nil, nil, "")
+	ch, err := fb.ChatStream(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestFallbackProvider_AllFail(t *testing.T) {
 	p2 := &errorProviderSimple{err: &ProviderError{Provider: "b", Kind: ErrorKindTransient, Err: errors.New("fail-b")}}
 
 	fb := NewFallbackProvider(p1, p2)
-	_, err := fb.ChatStream(context.Background(), nil, nil, "")
+	_, err := fb.ChatStream(context.Background(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -83,7 +83,7 @@ func TestFallbackProvider_StopsOnPermanentWhenConfigured(t *testing.T) {
 		FallbackOn: IsTransient, // only fallback on transient
 	}
 
-	_, err := fb.ChatStream(context.Background(), nil, nil, "")
+	_, err := fb.ChatStream(context.Background(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -105,7 +105,7 @@ func TestFallbackProvider_ContextCancelled(t *testing.T) {
 	p2 := &mockProvider{response: "should not reach"}
 
 	fb := NewFallbackProvider(p1, p2)
-	_, err := fb.ChatStream(ctx, nil, nil, "")
+	_, err := fb.ChatStream(ctx, nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -131,6 +131,6 @@ type errorProviderSimple struct {
 	err error
 }
 
-func (p *errorProviderSimple) ChatStream(_ context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (p *errorProviderSimple) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
 	return nil, p.err
 }

@@ -399,7 +399,7 @@ type mockProvider struct {
 	response string
 }
 
-func (m *mockProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (m *mockProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
 	ch := make(chan Delta, 3)
 	ch <- TextStartDelta{}
 	ch <- TextContentDelta{Content: m.response}

@@ -3,9 +3,10 @@ package agentsdk
 import "context"
 
 // Provider is the narrow LLM interface the agent loop needs.
-// When model is empty, the provider uses its default model.
+// Model selection is handled via ConfigContent in the message tree,
+// not as a parameter — each provider uses its own configured default.
 type Provider interface {
-	ChatStream(ctx context.Context, messages []Message, tools []ToolDef, model string) (<-chan Delta, error)
+	ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan Delta, error)
 }
 
 // NamedProvider is an optional interface providers can implement

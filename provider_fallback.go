@@ -17,7 +17,7 @@ func NewFallbackProvider(providers ...Provider) *FallbackProvider {
 
 func (f *FallbackProvider) Name() string { return "fallback" }
 
-func (f *FallbackProvider) ChatStream(ctx context.Context, messages []Message, tools []ToolDef, model string) (<-chan Delta, error) {
+func (f *FallbackProvider) ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan Delta, error) {
 	shouldFallback := f.FallbackOn
 	if shouldFallback == nil {
 		shouldFallback = func(error) bool { return true }
@@ -25,7 +25,7 @@ func (f *FallbackProvider) ChatStream(ctx context.Context, messages []Message, t
 
 	var errs []error
 	for _, p := range f.Providers {
-		ch, err := p.ChatStream(ctx, messages, tools, model)
+		ch, err := p.ChatStream(ctx, messages, tools)
 		if err == nil {
 			return ch, nil
 		}

@@ -21,23 +21,15 @@ func NewAdapter(client *Client) *Adapter {
 }
 
 // ChatStream implements agentsdk.Provider.
-func (a *Adapter) ChatStream(ctx context.Context, messages []agentsdk.Message, tools []agentsdk.ToolDef, model string) (<-chan agentsdk.Delta, error) {
+func (a *Adapter) ChatStream(ctx context.Context, messages []agentsdk.Message, tools []agentsdk.ToolDef) (<-chan agentsdk.Delta, error) {
 	oMsgs := toOllamaMessages(messages)
 	oTools := toOllamaTools(tools)
 
-	// Use model param if provided, else fall back to client default.
-	m := a.Client.Model
-	if model != "" {
-		m = model
-	}
-	origModel := a.Client.Model
-	a.Client.Model = m
 	rx, err := a.Client.ChatStream(ctx, oMsgs, oTools)
-	a.Client.Model = origModel
 	if err != nil {
 		return nil, &agentsdk.ProviderError{
 			Provider: "ollama",
-			Model:    m,
+			Model:    a.Client.Model,
 			Kind:     classifyOllamaError(err),
 			Err:      err,
 		}

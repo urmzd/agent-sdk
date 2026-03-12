@@ -141,11 +141,11 @@ Every execution delta carries a `ToolCallID` so consumers can demux parallel too
 
 ```go
 type Provider interface {
-    ChatStream(ctx context.Context, messages []Message, tools []ToolDef, model string) (<-chan Delta, error)
+    ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan Delta, error)
 }
 ```
 
-Implement this single method to integrate any LLM backend. The `model` parameter allows a single provider to serve multiple models — when empty, the provider uses its default. The SDK ships an Ollama adapter.
+Implement this single method to integrate any LLM backend. Each provider uses its own configured default model. Model selection is handled via `ConfigContent` in the message tree, not as a parameter. The SDK ships an Ollama adapter.
 
 Providers can optionally implement `NamedProvider` for identification in logs and error messages:
 
@@ -345,7 +345,7 @@ When the LLM requests multiple tool calls in a single response, all tools execut
 3. Check iteration cap
 4. Strip `ConfigContent` from messages
 5. Compact if configured or `CompactNow` is set
-6. Send messages + tool definitions to the provider via `ChatStream` with the resolved model
+6. Send messages + tool definitions to the provider via `ChatStream`
 7. Aggregate streaming deltas into a complete `AssistantMessage`, forward to caller
 8. Capture `UsageDelta` from the provider, enrich with wall-clock latency, forward to caller
 9. Persist the assistant message to the tree

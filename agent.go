@@ -247,9 +247,9 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []Messag
 			}
 		}
 
-		// Call LLM with model param + timing.
+		// Call LLM + timing.
 		start := time.Now()
-		rx, err := a.cfg.Provider.ChatStream(ctx, llmMessages, toolDefs, resolved.model)
+		rx, err := a.cfg.Provider.ChatStream(ctx, llmMessages, toolDefs)
 		if err != nil {
 			stream.send(ErrorDelta{Error: err})
 			return

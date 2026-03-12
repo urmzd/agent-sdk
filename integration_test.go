@@ -24,7 +24,7 @@ type toolCallProvider struct {
 	response string
 }
 
-func (p *toolCallProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (p *toolCallProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
 	p.mu.Lock()
 	call := p.calls
 	p.calls++
@@ -56,7 +56,7 @@ type multiToolCallProvider struct {
 	response string
 }
 
-func (p *multiToolCallProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (p *multiToolCallProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
 	p.mu.Lock()
 	call := p.calls
 	p.calls++
@@ -86,7 +86,7 @@ type multiTurnToolProvider struct {
 	finalMessage string
 }
 
-func (p *multiTurnToolProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (p *multiTurnToolProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
 	p.mu.Lock()
 	call := p.calls
 	p.calls++
@@ -111,7 +111,7 @@ type errorProvider struct {
 	err error
 }
 
-func (p *errorProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (p *errorProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
 	return nil, &ProviderError{
 		Provider: "error-mock",
 		Kind:     ErrorKindPermanent,
@@ -122,7 +122,7 @@ func (p *errorProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef, 
 // emptyProvider returns an empty channel (no deltas).
 type emptyProvider struct{}
 
-func (p *emptyProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (p *emptyProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
 	ch := make(chan Delta)
 	close(ch)
 	return ch, nil
@@ -135,7 +135,7 @@ type recordingProvider struct {
 	response string
 }
 
-func (p *recordingProvider) ChatStream(_ context.Context, msgs []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (p *recordingProvider) ChatStream(_ context.Context, msgs []Message, _ []ToolDef) (<-chan Delta, error) {
 	p.mu.Lock()
 	copied := make([]Message, len(msgs))
 	copy(copied, msgs)
@@ -156,7 +156,7 @@ type delayedProvider struct {
 	response string
 }
 
-func (p *delayedProvider) ChatStream(ctx context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (p *delayedProvider) ChatStream(ctx context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
 	ch := make(chan Delta, 10)
 	go func() {
 		defer close(ch)
@@ -178,7 +178,7 @@ type sequenceProvider struct {
 	responses []func(ch chan<- Delta)
 }
 
-func (p *sequenceProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (p *sequenceProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
 	p.mu.Lock()
 	idx := p.calls
 	p.calls++

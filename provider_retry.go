@@ -53,7 +53,7 @@ func (r *RetryProvider) Name() string {
 	return "retry(" + providerName(r.Inner) + ")"
 }
 
-func (r *RetryProvider) ChatStream(ctx context.Context, messages []Message, tools []ToolDef, model string) (<-chan Delta, error) {
+func (r *RetryProvider) ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan Delta, error) {
 	shouldRetry := r.Config.ShouldRetry
 	if shouldRetry == nil {
 		shouldRetry = IsTransient
@@ -61,7 +61,7 @@ func (r *RetryProvider) ChatStream(ctx context.Context, messages []Message, tool
 
 	var lastErr error
 	for attempt := range r.Config.MaxAttempts {
-		ch, err := r.Inner.ChatStream(ctx, messages, tools, model)
+		ch, err := r.Inner.ChatStream(ctx, messages, tools)
 		if err == nil {
 			return ch, nil
 		}

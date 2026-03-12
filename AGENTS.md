@@ -15,7 +15,7 @@ Go module with minimal dependencies (only `github.com/google/uuid`).
 | `content.go` | Content blocks (`TextContent`, `ToolUseContent`, `ToolResultContent`, `ConfigContent`) |
 | `delta.go` | Sealed `Delta` interface (LLM-side + execution-side + metadata + terminal) |
 | `stream.go` | `EventStream`, `Replay` for session restoration |
-| `provider.go` | `Provider` interface (`ChatStream` with model param), `NamedProvider` |
+| `provider.go` | `Provider` interface (`ChatStream`), `NamedProvider` |
 | `provider_fallback.go` | `FallbackProvider` — multi-provider failover |
 | `provider_retry.go` | `RetryProvider` — exponential backoff retry |
 | `errors.go` | Structured errors (`ProviderError`, `FallbackError`, `RetryError`), `ErrorKind`, `IsTransient`, `ClassifyHTTPStatus` |
@@ -34,7 +34,7 @@ Go module with minimal dependencies (only `github.com/google/uuid`).
 
 | Interface | Purpose |
 |-----------|---------|
-| `Provider` | `ChatStream(ctx, messages, tools, model) (<-chan Delta, error)` — plug in any LLM |
+| `Provider` | `ChatStream(ctx, messages, tools) (<-chan Delta, error)` — plug in any LLM |
 | `NamedProvider` | `Provider` + `Name() string` — optional identification for logs/errors |
 | `Tool` | `Definition() ToolDef` + `Execute(ctx, args) (string, error)` |
 | `SubAgentInvoker` | `InvokeAgent(ctx, task) *EventStream` — enables delta forwarding for sub-agents |
@@ -80,7 +80,7 @@ All satisfy `errors.Is(err, ErrProviderFailed)`. Use `IsTransient(err)` to check
 3. Check iteration cap from resolved config
 4. Strip `ConfigContent` from messages
 5. Compact if configured or `CompactNow` set
-6. Send messages + tool defs to provider via `ChatStream` with resolved model
+6. Send messages + tool defs to provider via `ChatStream`
 7. Aggregate streaming deltas into `AssistantMessage`, forward to caller
 8. Capture `UsageDelta` from provider, enrich with wall-clock latency, forward
 9. Persist assistant message to tree
@@ -114,7 +114,7 @@ All satisfy `errors.Is(err, ErrProviderFailed)`. Use `IsTransient(err)` to check
 ## Adding a New Provider
 
 1. Create a new package (e.g., `openai/`)
-2. Implement `Provider` interface: `ChatStream(ctx, []Message, []ToolDef, model) (<-chan Delta, error)`
+2. Implement `Provider` interface: `ChatStream(ctx, []Message, []ToolDef) (<-chan Delta, error)`
 3. Optionally implement `NamedProvider` for identification
 4. Return `*ProviderError` from `ChatStream` with appropriate `ErrorKind`
 5. Emit `UsageDelta` as the last delta before closing the channel (if token counts are available)

@@ -95,7 +95,7 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 		NewUserMessage(messagesToText(toSummarize)),
 	}
 
-	rx, err := provider.ChatStream(ctx, summaryReq, nil, "")
+	rx, err := provider.ChatStream(ctx, summaryReq, nil)
 	if err != nil {
 		return messages, nil // fallback: no compaction
 	}

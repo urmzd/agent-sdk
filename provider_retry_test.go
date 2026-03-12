@@ -12,7 +12,7 @@ func TestRetryProvider_SucceedsFirstTry(t *testing.T) {
 	inner := &mockProvider{response: "ok"}
 	rp := NewRetryProvider(inner, DefaultRetryConfig())
 
-	ch, err := rp.ChatStream(context.Background(), nil, nil, "")
+	ch, err := rp.ChatStream(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestRetryProvider_RetriesOnTransient(t *testing.T) {
 	}
 	rp := NewRetryProvider(inner, cfg)
 
-	ch, err := rp.ChatStream(context.Background(), nil, nil, "")
+	ch, err := rp.ChatStream(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestRetryProvider_StopsOnPermanent(t *testing.T) {
 	}
 	rp := NewRetryProvider(inner, cfg)
 
-	_, err := rp.ChatStream(context.Background(), nil, nil, "")
+	_, err := rp.ChatStream(context.Background(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -105,7 +105,7 @@ func TestRetryProvider_ExhaustsAttempts(t *testing.T) {
 	}
 	rp := NewRetryProvider(inner, cfg)
 
-	_, err := rp.ChatStream(context.Background(), nil, nil, "")
+	_, err := rp.ChatStream(context.Background(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -142,7 +142,7 @@ func TestRetryProvider_ContextCancelledDuringBackoff(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := rp.ChatStream(ctx, nil, nil, "")
+	_, err := rp.ChatStream(ctx, nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -177,7 +177,7 @@ type countingProvider struct {
 	response  string
 }
 
-func (p *countingProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef, _ string) (<-chan Delta, error) {
+func (p *countingProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
 	n := p.calls.Add(1)
 	if n <= p.failUntil {
 		return nil, p.err
