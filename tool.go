@@ -31,12 +31,6 @@ type Tool interface {
 	Execute(ctx context.Context, args map[string]any) (string, error)
 }
 
-// StreamingTool is a tool that streams deltas during execution.
-type StreamingTool interface {
-	Tool
-	Stream(ctx context.Context, args map[string]any) <-chan Result[any]
-}
-
 // ToolFunc adapts a plain function into a Tool.
 type ToolFunc struct {
 	Def ToolDef
@@ -49,6 +43,35 @@ func (t *ToolFunc) Definition() ToolDef {
 
 func (t *ToolFunc) Execute(ctx context.Context, args map[string]any) (string, error) {
 	return t.Fn(ctx, args)
+}
+
+// subAgentTool wraps a sub-agent as a tool. It implements both Tool and
+// SubAgentInvoker so the agent loop can forward child deltas.
+type subAgentTool struct {
+	def     ToolDef
+	factory func() *Agent
+}
+
+func (t *subAgentTool) Definition() ToolDef { return t.def }
+
+// Execute provides a blocking fallback — runs the child agent and returns
+// the concatenated text. The agent loop prefers InvokeAgent for streaming.
+func (t *subAgentTool) Execute(ctx context.Context, args map[string]any) (string, error) {
+	task, _ := args["task"].(string)
+	stream := t.InvokeAgent(ctx, task)
+	var result string
+	for d := range stream.Deltas() {
+		if tc, ok := d.(TextContentDelta); ok {
+			result += tc.Content
+		}
+	}
+	return result, stream.Wait()
+}
+
+// InvokeAgent creates a fresh child agent and invokes it, returning its stream.
+func (t *subAgentTool) InvokeAgent(ctx context.Context, task string) *EventStream {
+	child := t.factory()
+	return child.Invoke(ctx, []Message{NewUserMessage(task)})
 }
 
 // ToolRegistry holds named tools.
@@ -69,6 +92,11 @@ func NewToolRegistry(tools ...Tool) *ToolRegistry {
 func (r *ToolRegistry) Get(name string) (Tool, bool) {
 	t, ok := r.tools[name]
 	return t, ok
+}
+
+// Register adds a tool to the registry.
+func (r *ToolRegistry) Register(t Tool) {
+	r.tools[t.Definition().Name] = t
 }
 
 // Definitions returns all tool definitions.
