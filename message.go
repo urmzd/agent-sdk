@@ -7,17 +7,16 @@ const (
 	RoleSystem    Role = "system"
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
-	RoleTool      Role = "tool"
 )
 
 // Message is a sealed interface — one of SystemMessage, UserMessage,
-// AssistantMessage, or ToolResultMessage.
+// or AssistantMessage.
 type Message interface {
 	GetRole() Role
 	isMessage()
 }
 
-// SystemMessage contains system instructions.
+// SystemMessage contains system instructions or automatic tool results.
 type SystemMessage struct {
 	Content []SystemContent
 }
@@ -25,7 +24,7 @@ type SystemMessage struct {
 func (SystemMessage) GetRole() Role { return RoleSystem }
 func (SystemMessage) isMessage()    {}
 
-// UserMessage contains user input.
+// UserMessage contains user input or human-provided tool results.
 type UserMessage struct {
 	Content []UserContent
 }
@@ -41,15 +40,6 @@ type AssistantMessage struct {
 func (AssistantMessage) GetRole() Role { return RoleAssistant }
 func (AssistantMessage) isMessage()    {}
 
-// ToolResultMessage carries the result of a tool execution.
-type ToolResultMessage struct {
-	ToolCallID string
-	Content    []ToolResultContent
-}
-
-func (ToolResultMessage) GetRole() Role { return RoleTool }
-func (ToolResultMessage) isMessage()    {}
-
 // ── Convenience constructors ────────────────────────────────────────
 
 // NewSystemMessage creates a SystemMessage with a single text block.
@@ -62,10 +52,24 @@ func NewUserMessage(text string) UserMessage {
 	return UserMessage{Content: []UserContent{TextContent{Text: text}}}
 }
 
-// NewToolResultMessage creates a ToolResultMessage with a single text result.
-func NewToolResultMessage(toolCallID, text string) ToolResultMessage {
-	return ToolResultMessage{
-		ToolCallID: toolCallID,
-		Content:    []ToolResultContent{TextContent{Text: text}},
+// NewToolResultMessage creates a SystemMessage containing tool results.
+// Tool results from automatic execution are system messages — the SDK
+// executed the tools, not the user.
+func NewToolResultMessage(results ...ToolResultContent) SystemMessage {
+	content := make([]SystemContent, len(results))
+	for i, r := range results {
+		content[i] = r
 	}
+	return SystemMessage{Content: content}
+}
+
+// NewUserToolResultMessage creates a UserMessage containing tool results.
+// Used for human-in-the-loop: the agent requested a tool call but a human
+// provided the response (e.g., on interrupt).
+func NewUserToolResultMessage(results ...ToolResultContent) UserMessage {
+	content := make([]UserContent, len(results))
+	for i, r := range results {
+		content[i] = r
+	}
+	return UserMessage{Content: content}
 }
