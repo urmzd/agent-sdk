@@ -1,5 +1,7 @@
 package agentsdk
 
+import "context"
+
 // SubAgentDef defines a sub-agent that can be delegated to.
 type SubAgentDef struct {
 	Name         string
@@ -7,31 +9,13 @@ type SubAgentDef struct {
 	SystemPrompt string
 	Provider     Provider
 	Tools        *ToolRegistry
+	SubAgents    []SubAgentDef // sub-agents can have their own sub-agents
 	MaxIter      int
 }
 
-// ── Sub-agent deltas ────────────────────────────────────────────────
-
-// SubAgentStartDelta signals delegation to a sub-agent.
-type SubAgentStartDelta struct {
-	Name string
-	Task string
+// SubAgentInvoker is implemented by tools that wrap a sub-agent.
+// The agent loop checks for this interface to enable delta forwarding
+// instead of opaque Execute().
+type SubAgentInvoker interface {
+	InvokeAgent(ctx context.Context, task string) *EventStream
 }
-
-func (SubAgentStartDelta) isDelta() {}
-
-// SubAgentDeltaDelta wraps a child delta.
-type SubAgentDeltaDelta struct {
-	Name  string
-	Inner Delta
-}
-
-func (SubAgentDeltaDelta) isDelta() {}
-
-// SubAgentEndDelta signals the sub-agent completed.
-type SubAgentEndDelta struct {
-	Name   string
-	Result string
-}
-
-func (SubAgentEndDelta) isDelta() {}
