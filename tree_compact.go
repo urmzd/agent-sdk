@@ -3,6 +3,7 @@ package agentsdk
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -118,12 +119,13 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 		return "", fmt.Errorf("summarization: %w", err)
 	}
 
-	var summary string
+	var summaryBuf strings.Builder
 	for delta := range rx {
 		if tc, ok := delta.(TextContentDelta); ok {
-			summary += tc.Content
+			summaryBuf.WriteString(tc.Content)
 		}
 	}
+	summary := summaryBuf.String()
 
 	// Create a new branch forking from the parent of the first compacted node.
 	first := toCompact[0]

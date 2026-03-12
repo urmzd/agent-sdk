@@ -316,19 +316,19 @@ func TestAgentSingleToolCall(t *testing.T) {
 	if len(msgs) != 5 {
 		t.Fatalf("tree messages = %d, want 5", len(msgs))
 	}
-	if msgs[0].GetRole() != RoleSystem {
+	if msgs[0].Role() != RoleSystem {
 		t.Error("msgs[0] not system")
 	}
-	if msgs[1].GetRole() != RoleUser {
+	if msgs[1].Role() != RoleUser {
 		t.Error("msgs[1] not user")
 	}
-	if msgs[2].GetRole() != RoleAssistant {
+	if msgs[2].Role() != RoleAssistant {
 		t.Error("msgs[2] not assistant (tool call)")
 	}
-	if msgs[3].GetRole() != RoleSystem {
+	if msgs[3].Role() != RoleSystem {
 		t.Error("msgs[3] not system (tool result)")
 	}
-	if msgs[4].GetRole() != RoleAssistant {
+	if msgs[4].Role() != RoleAssistant {
 		t.Error("msgs[4] not assistant (final)")
 	}
 }
@@ -927,7 +927,7 @@ func TestAgentWithSlidingWindowCompactor(t *testing.T) {
 		t.Errorf("messages after sliding window = %d, want 4", len(recording.calls[0]))
 	}
 	// First should be system
-	if recording.calls[0][0].GetRole() != RoleSystem {
+	if recording.calls[0][0].Role() != RoleSystem {
 		t.Error("first message should be system")
 	}
 	recording.mu.Unlock()
@@ -990,7 +990,7 @@ func TestSummarizeCompactorAboveThreshold(t *testing.T) {
 	}
 
 	// First should be system
-	if result[0].GetRole() != RoleSystem {
+	if result[0].Role() != RoleSystem {
 		t.Error("first message should be system")
 	}
 	// Second should be summary
@@ -1442,10 +1442,10 @@ func TestAgentMultipleInvocationsOnSameTree(t *testing.T) {
 	if len(msgs) != 5 {
 		t.Fatalf("messages = %d, want 5", len(msgs))
 	}
-	if msgs[3].GetRole() != RoleUser {
+	if msgs[3].Role() != RoleUser {
 		t.Error("msgs[3] should be user (turn 2)")
 	}
-	if msgs[4].GetRole() != RoleAssistant {
+	if msgs[4].Role() != RoleAssistant {
 		t.Error("msgs[4] should be assistant (turn 2)")
 	}
 }
@@ -1564,7 +1564,7 @@ func TestEventStreamDrainRequired(t *testing.T) {
 
 func TestMessageConstructors(t *testing.T) {
 	sys := NewSystemMessage("system prompt")
-	if sys.GetRole() != RoleSystem {
+	if sys.Role() != RoleSystem {
 		t.Error("system role wrong")
 	}
 	if len(sys.Content) != 1 {
@@ -1575,7 +1575,7 @@ func TestMessageConstructors(t *testing.T) {
 	}
 
 	usr := NewUserMessage("user input")
-	if usr.GetRole() != RoleUser {
+	if usr.Role() != RoleUser {
 		t.Error("user role wrong")
 	}
 	if tc, ok := usr.Content[0].(TextContent); !ok || tc.Text != "user input" {
@@ -1585,7 +1585,7 @@ func TestMessageConstructors(t *testing.T) {
 	tr := NewToolResultMessage(
 		ToolResultContent{ToolCallID: "tc-1", Text: "result"},
 	)
-	if tr.GetRole() != RoleSystem {
+	if tr.Role() != RoleSystem {
 		t.Error("tool result message role should be system")
 	}
 	if trc, ok := tr.Content[0].(ToolResultContent); !ok || trc.ToolCallID != "tc-1" {
@@ -1595,7 +1595,7 @@ func TestMessageConstructors(t *testing.T) {
 	utr := NewUserToolResultMessage(
 		ToolResultContent{ToolCallID: "tc-2", Text: "user result"},
 	)
-	if utr.GetRole() != RoleUser {
+	if utr.Role() != RoleUser {
 		t.Error("user tool result role should be user")
 	}
 	if trc, ok := utr.Content[0].(ToolResultContent); !ok || trc.ToolCallID != "tc-2" {
@@ -1838,7 +1838,7 @@ func TestAgentEmptySystemPrompt(t *testing.T) {
 
 	msgs, _ := agent.Tree().FlattenBranch("main")
 	// Even with empty system prompt, root is a SystemMessage
-	if msgs[0].GetRole() != RoleSystem {
+	if msgs[0].Role() != RoleSystem {
 		t.Error("first message should be system even with empty prompt")
 	}
 }
@@ -2829,7 +2829,7 @@ func TestSlidingWindowOneOverBoundary(t *testing.T) {
 	if len(result) != 4 {
 		t.Errorf("messages = %d, want 4", len(result))
 	}
-	if result[0].GetRole() != RoleSystem {
+	if result[0].Role() != RoleSystem {
 		t.Error("first should be system")
 	}
 }

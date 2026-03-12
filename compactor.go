@@ -1,6 +1,9 @@
 package agentsdk
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Compactor reduces message history to fit context windows.
 type Compactor interface {
@@ -100,12 +103,13 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 		return messages, nil // fallback: no compaction
 	}
 
-	var summary string
+	var sb strings.Builder
 	for delta := range rx {
 		if tc, ok := delta.(TextContentDelta); ok {
-			summary += tc.Content
+			sb.WriteString(tc.Content)
 		}
 	}
+	summary := sb.String()
 
 	result := make([]Message, 0, keepLast+2)
 	result = append(result, messages[0]) // system
@@ -115,34 +119,48 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 }
 
 func messagesToText(msgs []Message) string {
-	var text string
+	var b strings.Builder
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case SystemMessage:
 			for _, c := range v.Content {
 				switch bc := c.(type) {
 				case TextContent:
-					text += "System: " + bc.Text + "\n"
+					b.WriteString("System: ")
+					b.WriteString(bc.Text)
+					b.WriteByte('\n')
 				case ToolResultContent:
-					text += "Tool Result [" + bc.ToolCallID + "]: " + bc.Text + "\n"
+					b.WriteString("Tool Result [")
+					b.WriteString(bc.ToolCallID)
+					b.WriteString("]: ")
+					b.WriteString(bc.Text)
+					b.WriteByte('\n')
 				}
 			}
 		case UserMessage:
 			for _, c := range v.Content {
 				switch bc := c.(type) {
 				case TextContent:
-					text += "User: " + bc.Text + "\n"
+					b.WriteString("User: ")
+					b.WriteString(bc.Text)
+					b.WriteByte('\n')
 				case ToolResultContent:
-					text += "Tool Result [" + bc.ToolCallID + "]: " + bc.Text + "\n"
+					b.WriteString("Tool Result [")
+					b.WriteString(bc.ToolCallID)
+					b.WriteString("]: ")
+					b.WriteString(bc.Text)
+					b.WriteByte('\n')
 				}
 			}
 		case AssistantMessage:
 			for _, c := range v.Content {
 				if tc, ok := c.(TextContent); ok {
-					text += "Assistant: " + tc.Text + "\n"
+					b.WriteString("Assistant: ")
+					b.WriteString(tc.Text)
+					b.WriteByte('\n')
 				}
 			}
 		}
 	}
-	return text
+	return b.String()
 }

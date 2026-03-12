@@ -32,7 +32,10 @@ type TreeDiff struct {
 func (t *Tree) Diff(fromNodeID, toNodeID NodeID) (TreeDiff, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	return t.diffUnlocked(fromNodeID, toNodeID)
+}
 
+func (t *Tree) diffUnlocked(fromNodeID, toNodeID NodeID) (TreeDiff, error) {
 	fromPath, err := t.pathUnlocked(fromNodeID)
 	if err != nil {
 		return TreeDiff{}, err
@@ -97,15 +100,15 @@ func (t *Tree) Diff(fromNodeID, toNodeID NodeID) (TreeDiff, error) {
 // DiffBranches computes the difference between the tips of two branches.
 func (t *Tree) DiffBranches(a, b BranchID) (TreeDiff, error) {
 	t.mu.RLock()
-	tipA, okA := t.branches[a]
-	tipB, okB := t.branches[b]
-	t.mu.RUnlock()
+	defer t.mu.RUnlock()
 
+	tipA, okA := t.branches[a]
 	if !okA {
 		return TreeDiff{}, fmt.Errorf("%w: %s", ErrBranchNotFound, a)
 	}
+	tipB, okB := t.branches[b]
 	if !okB {
 		return TreeDiff{}, fmt.Errorf("%w: %s", ErrBranchNotFound, b)
 	}
-	return t.Diff(tipA, tipB)
+	return t.diffUnlocked(tipA, tipB)
 }

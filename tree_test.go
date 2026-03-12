@@ -83,13 +83,13 @@ func TestFlatten(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("flatten length = %d, want 3", len(msgs))
 	}
-	if msgs[0].GetRole() != RoleSystem {
+	if msgs[0].Role() != RoleSystem {
 		t.Error("msgs[0] not system")
 	}
-	if msgs[1].GetRole() != RoleUser {
+	if msgs[1].Role() != RoleUser {
 		t.Error("msgs[1] not user")
 	}
-	if msgs[2].GetRole() != RoleAssistant {
+	if msgs[2].Role() != RoleAssistant {
 		t.Error("msgs[2] not assistant")
 	}
 }
@@ -570,13 +570,13 @@ func TestInvoke(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("messages = %d, want 3", len(msgs))
 	}
-	if msgs[0].GetRole() != RoleSystem {
+	if msgs[0].Role() != RoleSystem {
 		t.Error("msgs[0] not system")
 	}
-	if msgs[1].GetRole() != RoleUser {
+	if msgs[1].Role() != RoleUser {
 		t.Error("msgs[1] not user")
 	}
-	if msgs[2].GetRole() != RoleAssistant {
+	if msgs[2].Role() != RoleAssistant {
 		t.Error("msgs[2] not assistant")
 	}
 }
@@ -1092,7 +1092,7 @@ func TestInvokeUsesActiveCursor(t *testing.T) {
 	if len(msgs) != 4 {
 		t.Fatalf("messages = %d, want 4", len(msgs))
 	}
-	if msgs[3].GetRole() != RoleAssistant {
+	if msgs[3].Role() != RoleAssistant {
 		t.Error("last message should be assistant")
 	}
 }

@@ -96,11 +96,6 @@ func Replay(messages []Message) *EventStream {
 
 func replayToolResults(stream *EventStream, content []SystemContent) {
 	for _, c := range content {
-		switch c.(type) {
-		case ConfigContent:
-			continue // skip config blocks
-		default:
-		}
 		if tr, ok := c.(ToolResultContent); ok {
 			stream.send(ToolExecStartDelta{ToolCallID: tr.ToolCallID})
 			stream.send(ToolExecEndDelta{ToolCallID: tr.ToolCallID, Result: tr.Text})
@@ -110,11 +105,6 @@ func replayToolResults(stream *EventStream, content []SystemContent) {
 
 func replayUserToolResults(stream *EventStream, content []UserContent) {
 	for _, c := range content {
-		switch c.(type) {
-		case ConfigContent:
-			continue // skip config blocks
-		default:
-		}
 		if tr, ok := c.(ToolResultContent); ok {
 			stream.send(ToolExecStartDelta{ToolCallID: tr.ToolCallID})
 			stream.send(ToolExecEndDelta{ToolCallID: tr.ToolCallID, Result: tr.Text})

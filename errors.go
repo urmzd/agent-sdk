@@ -11,7 +11,7 @@ import (
 var (
 	ErrToolNotFound    = errors.New("tool not found")
 	ErrMaxIterations   = errors.New("max iterations reached")
-	ErrStreamCancelled = errors.New("stream cancelled")
+	ErrStreamCanceled = errors.New("stream canceled")
 	ErrProviderFailed  = errors.New("provider failed")
 )
 

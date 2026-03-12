@@ -3,6 +3,7 @@ package agentsdk
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -214,7 +215,7 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []Messag
 	for iterCount := 0; ; iterCount++ {
 		select {
 		case <-ctx.Done():
-			stream.send(ErrorDelta{Error: ErrStreamCancelled})
+			stream.send(ErrorDelta{Error: ErrStreamCanceled})
 			return
 		default:
 		}
@@ -377,7 +378,7 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 				task, _ := tc.Arguments["task"].(string)
 				childStream := invoker.InvokeAgent(ctx, task)
 
-				var result string
+				var resultBuf strings.Builder
 				for d := range childStream.Deltas() {
 					// Forward child deltas wrapped with attribution.
 					stream.send(ToolExecDelta{
@@ -385,9 +386,10 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 						Inner:      d,
 					})
 					if tcd, ok := d.(TextContentDelta); ok {
-						result += tcd.Content
+						resultBuf.WriteString(tcd.Content)
 					}
 				}
+				result := resultBuf.String()
 
 				errStr := ""
 				if err := childStream.Wait(); err != nil {

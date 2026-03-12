@@ -12,7 +12,7 @@ const (
 // Message is a sealed interface — one of SystemMessage, UserMessage,
 // or AssistantMessage.
 type Message interface {
-	GetRole() Role
+	Role() Role
 	isMessage()
 }
 
@@ -21,7 +21,7 @@ type SystemMessage struct {
 	Content []SystemContent
 }
 
-func (SystemMessage) GetRole() Role { return RoleSystem }
+func (SystemMessage) Role() Role { return RoleSystem }
 func (SystemMessage) isMessage()    {}
 
 // UserMessage contains user input or human-provided tool results.
@@ -29,7 +29,7 @@ type UserMessage struct {
 	Content []UserContent
 }
 
-func (UserMessage) GetRole() Role { return RoleUser }
+func (UserMessage) Role() Role { return RoleUser }
 func (UserMessage) isMessage()    {}
 
 // AssistantMessage contains the model's response (text and/or tool calls).
@@ -37,7 +37,7 @@ type AssistantMessage struct {
 	Content []AssistantContent
 }
 
-func (AssistantMessage) GetRole() Role { return RoleAssistant }
+func (AssistantMessage) Role() Role { return RoleAssistant }
 func (AssistantMessage) isMessage()    {}
 
 // ── Convenience constructors ────────────────────────────────────────

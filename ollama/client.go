@@ -104,8 +104,7 @@ func (c *Client) GenerateStream(ctx context.Context, prompt string) (<-chan stri
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	streamClient := &http.Client{}
-	resp, err := streamClient.Do(httpReq)
+	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		close(ch)
 		return ch, fmt.Errorf("ollama generate stream: %w", err)
@@ -215,8 +214,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, tools [
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	streamClient := &http.Client{}
-	resp, err := streamClient.Do(httpReq)
+	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		close(ch)
 		return ch, fmt.Errorf("ollama chat_stream: %w", err)

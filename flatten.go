@@ -17,7 +17,10 @@ type AnnotatedMessage struct {
 func (t *Tree) Flatten(toNodeID NodeID) ([]Message, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	return t.flattenUnlocked(toNodeID)
+}
 
+func (t *Tree) flattenUnlocked(toNodeID NodeID) ([]Message, error) {
 	path, err := t.pathUnlocked(toNodeID)
 	if err != nil {
 		return nil, err
@@ -26,10 +29,7 @@ func (t *Tree) Flatten(toNodeID NodeID) ([]Message, error) {
 	messages := make([]Message, 0, len(path))
 	for _, nid := range path {
 		node := t.nodes[nid]
-		switch node.State {
-		case NodeArchived:
-			continue
-		default:
+		if node.State != NodeArchived {
 			messages = append(messages, node.Message)
 		}
 	}
@@ -39,13 +39,13 @@ func (t *Tree) Flatten(toNodeID NodeID) ([]Message, error) {
 // FlattenBranch flattens the path from root to the tip of the given branch.
 func (t *Tree) FlattenBranch(branch BranchID) ([]Message, error) {
 	t.mu.RLock()
-	tipID, ok := t.branches[branch]
-	t.mu.RUnlock()
+	defer t.mu.RUnlock()
 
+	tipID, ok := t.branches[branch]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrBranchNotFound, branch)
 	}
-	return t.Flatten(tipID)
+	return t.flattenUnlocked(tipID)
 }
 
 // FlattenAnnotated walks the path from root to the given node and returns
@@ -54,7 +54,10 @@ func (t *Tree) FlattenBranch(branch BranchID) ([]Message, error) {
 func (t *Tree) FlattenAnnotated(toNodeID NodeID) ([]AnnotatedMessage, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	return t.flattenAnnotatedUnlocked(toNodeID)
+}
 
+func (t *Tree) flattenAnnotatedUnlocked(toNodeID NodeID) ([]AnnotatedMessage, error) {
 	path, err := t.pathUnlocked(toNodeID)
 	if err != nil {
 		return nil, err
@@ -86,11 +89,11 @@ func (t *Tree) FlattenAnnotated(toNodeID NodeID) ([]AnnotatedMessage, error) {
 // branch, returning annotated messages.
 func (t *Tree) FlattenBranchAnnotated(branch BranchID) ([]AnnotatedMessage, error) {
 	t.mu.RLock()
-	tipID, ok := t.branches[branch]
-	t.mu.RUnlock()
+	defer t.mu.RUnlock()
 
+	tipID, ok := t.branches[branch]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrBranchNotFound, branch)
 	}
-	return t.FlattenAnnotated(tipID)
+	return t.flattenAnnotatedUnlocked(tipID)
 }
