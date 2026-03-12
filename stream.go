@@ -2,9 +2,6 @@ package agentsdk
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
 	"sync"
 )
 
@@ -56,56 +53,72 @@ func (s *EventStream) close(err error) {
 	close(s.done)
 }
 
-// ── SSE helper ──────────────────────────────────────────────────────
+// ── Replay ──────────────────────────────────────────────────────────
 
-// sseEvent matches Zoro's SSE JSON format.
-type sseEvent struct {
-	Type string `json:"type"`
-	Data any    `json:"data"`
+// Replay converts stored messages into a stream of deltas, enabling
+// session restoration. Clients receive the same delta types as if the
+// conversation happened live. Only assistant messages and tool results
+// produce deltas — system and user text messages are context, not events.
+func Replay(messages []Message) *EventStream {
+	_, cancel := context.WithCancel(context.Background())
+	stream := newEventStream(cancel)
+
+	go func() {
+		defer func() {
+			stream.send(DoneDelta{})
+			stream.close(nil)
+		}()
+
+		for _, msg := range messages {
+			switch v := msg.(type) {
+			case AssistantMessage:
+				for _, c := range v.Content {
+					switch bc := c.(type) {
+					case TextContent:
+						stream.send(TextStartDelta{})
+						stream.send(TextContentDelta{Content: bc.Text})
+						stream.send(TextEndDelta{})
+					case ToolUseContent:
+						stream.send(ToolCallStartDelta{ID: bc.ID, Name: bc.Name})
+						stream.send(ToolCallEndDelta{Arguments: bc.Arguments})
+					}
+				}
+			case SystemMessage:
+				replayToolResults(stream, v.Content)
+			case UserMessage:
+				replayUserToolResults(stream, v.Content)
+			}
+		}
+	}()
+
+	return stream
 }
 
-// WriteSSE bridges an EventStream to an HTTP response as SSE.
-// Converts typed deltas to Zoro-compatible SSE JSON events.
-func WriteSSE(w http.ResponseWriter, flusher http.Flusher, stream *EventStream) error {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	for delta := range stream.Deltas() {
-		evt := deltaToSSE(delta)
-		if evt == nil {
-			continue
+func replayToolResults(stream *EventStream, content []SystemContent) {
+	for _, c := range content {
+		switch c.(type) {
+		case ConfigContent:
+			continue // skip config blocks
+		default:
 		}
-		data, err := json.Marshal(evt)
-		if err != nil {
-			continue
-		}
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		if flusher != nil {
-			flusher.Flush()
+		if tr, ok := c.(ToolResultContent); ok {
+			stream.send(ToolExecStartDelta{ToolCallID: tr.ToolCallID})
+			stream.send(ToolExecEndDelta{ToolCallID: tr.ToolCallID, Result: tr.Text})
 		}
 	}
-	return stream.err
 }
 
-func deltaToSSE(d Delta) *sseEvent {
-	switch v := d.(type) {
-	case TextContentDelta:
-		return &sseEvent{Type: "text_delta", Data: map[string]string{"content": v.Content}}
-	case ToolCallStartDelta:
-		return &sseEvent{Type: "tool_call_start", Data: map[string]string{"id": v.ID, "name": v.Name}}
-	case ToolCallEndDelta:
-		return &sseEvent{Type: "tool_call_result", Data: map[string]any{"id": "", "result": v.Arguments}}
-	case ErrorDelta:
-		msg := "unknown error"
-		if v.Error != nil {
-			msg = v.Error.Error()
+func replayUserToolResults(stream *EventStream, content []UserContent) {
+	for _, c := range content {
+		switch c.(type) {
+		case ConfigContent:
+			continue // skip config blocks
+		default:
 		}
-		return &sseEvent{Type: "error", Data: map[string]string{"message": msg}}
-	case DoneDelta:
-		return &sseEvent{Type: "done", Data: nil}
-	default:
-		return nil
+		if tr, ok := c.(ToolResultContent); ok {
+			stream.send(ToolExecStartDelta{ToolCallID: tr.ToolCallID})
+			stream.send(ToolExecEndDelta{ToolCallID: tr.ToolCallID, Result: tr.Text})
+		}
 	}
 }
+
