@@ -7,6 +7,36 @@ type Compactor interface {
 	Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error)
 }
 
+// ── Data-driven compaction config ────────────────────────────────────
+
+// CompactStrategy names a compaction algorithm.
+type CompactStrategy string
+
+const (
+	CompactNone          CompactStrategy = "none"
+	CompactSlidingWindow CompactStrategy = "sliding_window"
+	CompactSummarize     CompactStrategy = "summarize"
+)
+
+// CompactConfig is a serialisable description of a compaction strategy.
+type CompactConfig struct {
+	Strategy   CompactStrategy
+	WindowSize int // for sliding_window
+	Threshold  int // for summarize
+}
+
+// ToCompactor converts the config into a Compactor implementation.
+func (cc CompactConfig) ToCompactor() Compactor {
+	switch cc.Strategy {
+	case CompactSlidingWindow:
+		return NewSlidingWindowCompactor(cc.WindowSize)
+	case CompactSummarize:
+		return NewSummarizeCompactor(cc.Threshold)
+	default:
+		return NoopCompactor{}
+	}
+}
+
 // NoopCompactor passes messages through unchanged.
 type NoopCompactor struct{}
 
@@ -65,7 +95,7 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 		NewUserMessage(messagesToText(toSummarize)),
 	}
 
-	rx, err := provider.ChatStream(ctx, summaryReq, nil)
+	rx, err := provider.ChatStream(ctx, summaryReq, nil, "")
 	if err != nil {
 		return messages, nil // fallback: no compaction
 	}
@@ -88,22 +118,28 @@ func messagesToText(msgs []Message) string {
 	var text string
 	for _, m := range msgs {
 		switch v := m.(type) {
+		case SystemMessage:
+			for _, c := range v.Content {
+				switch bc := c.(type) {
+				case TextContent:
+					text += "System: " + bc.Text + "\n"
+				case ToolResultContent:
+					text += "Tool Result [" + bc.ToolCallID + "]: " + bc.Text + "\n"
+				}
+			}
 		case UserMessage:
 			for _, c := range v.Content {
-				if tc, ok := c.(TextContent); ok {
-					text += "User: " + tc.Text + "\n"
+				switch bc := c.(type) {
+				case TextContent:
+					text += "User: " + bc.Text + "\n"
+				case ToolResultContent:
+					text += "Tool Result [" + bc.ToolCallID + "]: " + bc.Text + "\n"
 				}
 			}
 		case AssistantMessage:
 			for _, c := range v.Content {
 				if tc, ok := c.(TextContent); ok {
 					text += "Assistant: " + tc.Text + "\n"
-				}
-			}
-		case ToolResultMessage:
-			for _, c := range v.Content {
-				if tc, ok := c.(TextContent); ok {
-					text += "Tool: " + tc.Text + "\n"
 				}
 			}
 		}
