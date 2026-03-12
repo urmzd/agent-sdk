@@ -47,8 +47,13 @@ type ChatRequest struct {
 }
 
 type ChatChunk struct {
-	Message ChatMessage `json:"message"`
-	Done    bool        `json:"done"`
+	Message            ChatMessage `json:"message"`
+	Done               bool        `json:"done"`
+	PromptEvalCount    int         `json:"prompt_eval_count,omitempty"`
+	EvalCount          int         `json:"eval_count,omitempty"`
+	TotalDuration      int64       `json:"total_duration,omitempty"`
+	PromptEvalDuration int64       `json:"prompt_eval_duration,omitempty"`
+	EvalDuration       int64       `json:"eval_duration,omitempty"`
 }
 
 type GenerateRequest struct {

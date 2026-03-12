@@ -2,9 +2,13 @@ package ollama
 
 import (
 	"context"
+	"strings"
 
 	agentsdk "github.com/urmzd/agent-sdk"
 )
+
+// Name implements agentsdk.NamedProvider.
+func (a *Adapter) Name() string { return "ollama" }
 
 // Adapter wraps the Ollama Client and implements agentsdk.Provider.
 type Adapter struct {
@@ -17,13 +21,26 @@ func NewAdapter(client *Client) *Adapter {
 }
 
 // ChatStream implements agentsdk.Provider.
-func (a *Adapter) ChatStream(ctx context.Context, messages []agentsdk.Message, tools []agentsdk.ToolDef) (<-chan agentsdk.Delta, error) {
+func (a *Adapter) ChatStream(ctx context.Context, messages []agentsdk.Message, tools []agentsdk.ToolDef, model string) (<-chan agentsdk.Delta, error) {
 	oMsgs := toOllamaMessages(messages)
 	oTools := toOllamaTools(tools)
 
+	// Use model param if provided, else fall back to client default.
+	m := a.Client.Model
+	if model != "" {
+		m = model
+	}
+	origModel := a.Client.Model
+	a.Client.Model = m
 	rx, err := a.Client.ChatStream(ctx, oMsgs, oTools)
+	a.Client.Model = origModel
 	if err != nil {
-		return nil, err
+		return nil, &agentsdk.ProviderError{
+			Provider: "ollama",
+			Model:    m,
+			Kind:     classifyOllamaError(err),
+			Err:      err,
+		}
 	}
 
 	out := make(chan agentsdk.Delta, 64)
@@ -36,6 +53,12 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []agentsdk.Message, t
 				if textStarted {
 					out <- agentsdk.TextEndDelta{}
 					textStarted = false
+				}
+				// Emit usage delta from the final chunk.
+				out <- agentsdk.UsageDelta{
+					PromptTokens:     chunk.PromptEvalCount,
+					CompletionTokens: chunk.EvalCount,
+					TotalTokens:      chunk.PromptEvalCount + chunk.EvalCount,
 				}
 				continue
 			}
@@ -105,11 +128,41 @@ func toOllamaMessages(msgs []agentsdk.Message) []ChatMessage {
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case agentsdk.SystemMessage:
-			text := extractText(v.Content)
-			out = append(out, ChatMessage{Role: "system", Content: text})
+			// Split: text goes to system role, tool results go to tool role.
+			var textParts []string
+			var toolResults []agentsdk.ToolResultContent
+			for _, c := range v.Content {
+				switch bc := c.(type) {
+				case agentsdk.TextContent:
+					textParts = append(textParts, bc.Text)
+				case agentsdk.ToolResultContent:
+					toolResults = append(toolResults, bc)
+				}
+			}
+			if len(textParts) > 0 {
+				out = append(out, ChatMessage{Role: "system", Content: strings.Join(textParts, "")})
+			}
+			for _, tr := range toolResults {
+				out = append(out, ChatMessage{Role: "tool", Content: tr.Text})
+			}
 		case agentsdk.UserMessage:
-			text := extractUserText(v.Content)
-			out = append(out, ChatMessage{Role: "user", Content: text})
+			// Split: text goes to user role, tool results go to tool role.
+			var textParts []string
+			var toolResults []agentsdk.ToolResultContent
+			for _, c := range v.Content {
+				switch bc := c.(type) {
+				case agentsdk.TextContent:
+					textParts = append(textParts, bc.Text)
+				case agentsdk.ToolResultContent:
+					toolResults = append(toolResults, bc)
+				}
+			}
+			if len(textParts) > 0 {
+				out = append(out, ChatMessage{Role: "user", Content: strings.Join(textParts, "")})
+			}
+			for _, tr := range toolResults {
+				out = append(out, ChatMessage{Role: "tool", Content: tr.Text})
+			}
 		case agentsdk.AssistantMessage:
 			msg := ChatMessage{Role: "assistant"}
 			for _, c := range v.Content {
@@ -126,9 +179,6 @@ func toOllamaMessages(msgs []agentsdk.Message) []ChatMessage {
 				}
 			}
 			out = append(out, msg)
-		case agentsdk.ToolResultMessage:
-			text := extractToolResultText(v.Content)
-			out = append(out, ChatMessage{Role: "tool", Content: text})
 		}
 	}
 	return out
@@ -157,32 +207,14 @@ func toOllamaTools(defs []agentsdk.ToolDef) []Tool {
 	return out
 }
 
-func extractText(content []agentsdk.SystemContent) string {
-	var s string
-	for _, c := range content {
-		if tc, ok := c.(agentsdk.TextContent); ok {
-			s += tc.Text
-		}
+// classifyOllamaError inspects the error to determine if it's transient.
+func classifyOllamaError(err error) agentsdk.ErrorKind {
+	s := err.Error()
+	if strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "timeout") ||
+		strings.Contains(s, "returned 5") ||
+		strings.Contains(s, "returned 429") {
+		return agentsdk.ErrorKindTransient
 	}
-	return s
-}
-
-func extractUserText(content []agentsdk.UserContent) string {
-	var s string
-	for _, c := range content {
-		if tc, ok := c.(agentsdk.TextContent); ok {
-			s += tc.Text
-		}
-	}
-	return s
-}
-
-func extractToolResultText(content []agentsdk.ToolResultContent) string {
-	var s string
-	for _, c := range content {
-		if tc, ok := c.(agentsdk.TextContent); ok {
-			s += tc.Text
-		}
-	}
-	return s
+	return agentsdk.ErrorKindPermanent
 }
