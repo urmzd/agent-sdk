@@ -3,11 +3,13 @@ package agentsdk
 import (
 	"context"
 	"sync"
+
+	"github.com/urmzd/agent-sdk/core"
 )
 
 // EventStream is the consumer handle for streaming agent deltas.
 type EventStream struct {
-	deltas chan Delta
+	deltas chan core.Delta
 	done   chan struct{}
 	err    error
 	cancel context.CancelFunc
@@ -16,14 +18,14 @@ type EventStream struct {
 
 func newEventStream(cancel context.CancelFunc) *EventStream {
 	return &EventStream{
-		deltas: make(chan Delta, 128),
+		deltas: make(chan core.Delta, 128),
 		done:   make(chan struct{}),
 		cancel: cancel,
 	}
 }
 
 // Deltas returns a channel that yields deltas. Closed on completion.
-func (s *EventStream) Deltas() <-chan Delta {
+func (s *EventStream) Deltas() <-chan core.Delta {
 	return s.deltas
 }
 
@@ -40,7 +42,7 @@ func (s *EventStream) Cancel() {
 	})
 }
 
-func (s *EventStream) send(d Delta) {
+func (s *EventStream) send(d core.Delta) {
 	select {
 	case s.deltas <- d:
 	default:
@@ -59,33 +61,33 @@ func (s *EventStream) close(err error) {
 // session restoration. Clients receive the same delta types as if the
 // conversation happened live. Only assistant messages and tool results
 // produce deltas — system and user text messages are context, not events.
-func Replay(messages []Message) *EventStream {
+func Replay(messages []core.Message) *EventStream {
 	_, cancel := context.WithCancel(context.Background())
 	stream := newEventStream(cancel)
 
 	go func() {
 		defer func() {
-			stream.send(DoneDelta{})
+			stream.send(core.DoneDelta{})
 			stream.close(nil)
 		}()
 
 		for _, msg := range messages {
 			switch v := msg.(type) {
-			case AssistantMessage:
+			case core.AssistantMessage:
 				for _, c := range v.Content {
 					switch bc := c.(type) {
-					case TextContent:
-						stream.send(TextStartDelta{})
-						stream.send(TextContentDelta{Content: bc.Text})
-						stream.send(TextEndDelta{})
-					case ToolUseContent:
-						stream.send(ToolCallStartDelta{ID: bc.ID, Name: bc.Name})
-						stream.send(ToolCallEndDelta{Arguments: bc.Arguments})
+					case core.TextContent:
+						stream.send(core.TextStartDelta{})
+						stream.send(core.TextContentDelta{Content: bc.Text})
+						stream.send(core.TextEndDelta{})
+					case core.ToolUseContent:
+						stream.send(core.ToolCallStartDelta{ID: bc.ID, Name: bc.Name})
+						stream.send(core.ToolCallEndDelta{Arguments: bc.Arguments})
 					}
 				}
-			case SystemMessage:
+			case core.SystemMessage:
 				replayToolResults(stream, v.Content)
-			case UserMessage:
+			case core.UserMessage:
 				replayUserToolResults(stream, v.Content)
 			}
 		}
@@ -94,21 +96,20 @@ func Replay(messages []Message) *EventStream {
 	return stream
 }
 
-func replayToolResults(stream *EventStream, content []SystemContent) {
+func replayToolResults(stream *EventStream, content []core.SystemContent) {
 	for _, c := range content {
-		if tr, ok := c.(ToolResultContent); ok {
-			stream.send(ToolExecStartDelta{ToolCallID: tr.ToolCallID})
-			stream.send(ToolExecEndDelta{ToolCallID: tr.ToolCallID, Result: tr.Text})
+		if tr, ok := c.(core.ToolResultContent); ok {
+			stream.send(core.ToolExecStartDelta{ToolCallID: tr.ToolCallID})
+			stream.send(core.ToolExecEndDelta{ToolCallID: tr.ToolCallID, Result: tr.Text})
 		}
 	}
 }
 
-func replayUserToolResults(stream *EventStream, content []UserContent) {
+func replayUserToolResults(stream *EventStream, content []core.UserContent) {
 	for _, c := range content {
-		if tr, ok := c.(ToolResultContent); ok {
-			stream.send(ToolExecStartDelta{ToolCallID: tr.ToolCallID})
-			stream.send(ToolExecEndDelta{ToolCallID: tr.ToolCallID, Result: tr.Text})
+		if tr, ok := c.(core.ToolResultContent); ok {
+			stream.send(core.ToolExecStartDelta{ToolCallID: tr.ToolCallID})
+			stream.send(core.ToolExecEndDelta{ToolCallID: tr.ToolCallID, Result: tr.Text})
 		}
 	}
 }
-

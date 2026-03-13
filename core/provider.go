@@ -1,4 +1,4 @@
-package agentsdk
+package core
 
 import "context"
 
@@ -16,9 +16,9 @@ type NamedProvider interface {
 	Name() string
 }
 
-// providerName returns the name of a provider if it implements NamedProvider,
+// ProviderName returns the name of a provider if it implements NamedProvider,
 // otherwise returns "unknown".
-func providerName(p Provider) string {
+func ProviderName(p Provider) string {
 	if np, ok := p.(NamedProvider); ok {
 		return np.Name()
 	}

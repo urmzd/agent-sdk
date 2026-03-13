@@ -1,57 +1,59 @@
-package agentsdk
+package tree
 
 import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/urmzd/agent-sdk/core"
 )
 
-// TreeOption configures a Tree during construction.
-type TreeOption func(*Tree)
+// Option configures a Tree during construction.
+type Option func(*Tree)
 
 // WithWAL sets the write-ahead log for the tree.
-func WithWAL(wal WAL) TreeOption {
+func WithWAL(wal core.WAL) Option {
 	return func(t *Tree) { t.wal = wal }
 }
 
 // WithStore sets the persistence store for the tree.
-func WithStore(store Store) TreeOption {
+func WithStore(store core.Store) Option {
 	return func(t *Tree) { t.store = store }
 }
 
 // Tree is a branching conversation graph rooted at a system message.
 type Tree struct {
 	mu          sync.RWMutex
-	nodes       map[NodeID]*Node
-	children    map[NodeID][]NodeID // parent -> ordered children
-	rootID      NodeID
-	branches    map[BranchID]NodeID // branch -> tip node
-	active      BranchID           // the branch Invoke reads from
-	checkpoints map[CheckpointID]Checkpoint
-	wal         WAL
-	store       Store
+	nodes       map[core.NodeID]*core.Node
+	children    map[core.NodeID][]core.NodeID // parent -> ordered children
+	rootID      core.NodeID
+	branches    map[core.BranchID]core.NodeID // branch -> tip node
+	active      core.BranchID                 // the branch Invoke reads from
+	checkpoints map[core.CheckpointID]core.Checkpoint
+	wal         core.WAL
+	store       core.Store
 }
 
-// NewTree creates a new conversation tree rooted at the given system message.
-func NewTree(systemMsg SystemMessage, opts ...TreeOption) (*Tree, error) {
+// New creates a new conversation tree rooted at the given system message.
+func New(systemMsg core.SystemMessage, opts ...Option) (*Tree, error) {
 	t := &Tree{
-		nodes:       make(map[NodeID]*Node),
-		children:    make(map[NodeID][]NodeID),
-		branches:    make(map[BranchID]NodeID),
-		checkpoints: make(map[CheckpointID]Checkpoint),
+		nodes:       make(map[core.NodeID]*core.Node),
+		children:    make(map[core.NodeID][]core.NodeID),
+		branches:    make(map[core.BranchID]core.NodeID),
+		checkpoints: make(map[core.CheckpointID]core.Checkpoint),
 	}
 	for _, opt := range opts {
 		opt(t)
 	}
 
-	rootID := NodeID(NewID())
-	mainBranch := BranchID("main")
+	rootID := core.NodeID(core.NewID())
+	mainBranch := core.BranchID("main")
 	now := time.Now()
 
-	root := &Node{
+	root := &core.Node{
 		ID:        rootID,
 		Message:   systemMsg,
-		State:     NodeActive,
+		State:     core.NodeActive,
 		Version:   1,
 		Depth:     0,
 		BranchID:  mainBranch,
@@ -68,14 +70,14 @@ func NewTree(systemMsg SystemMessage, opts ...TreeOption) (*Tree, error) {
 }
 
 // Active returns the currently active branch ID.
-func (t *Tree) Active() BranchID {
+func (t *Tree) Active() core.BranchID {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.active
 }
 
 // SetActive sets the active branch. Returns an error if the branch does not exist.
-func (t *Tree) SetActive(branch BranchID) error {
+func (t *Tree) SetActive(branch core.BranchID) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.branches[branch]; !ok {
@@ -86,14 +88,14 @@ func (t *Tree) SetActive(branch BranchID) error {
 }
 
 // Root returns the root node.
-func (t *Tree) Root() *Node {
+func (t *Tree) Root() *core.Node {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.nodes[t.rootID]
 }
 
 // getNode returns a node by ID (caller must hold lock).
-func (t *Tree) getNode(id NodeID) (*Node, error) {
+func (t *Tree) getNode(id core.NodeID) (*core.Node, error) {
 	n, ok := t.nodes[id]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrNodeNotFound, id)
@@ -102,7 +104,7 @@ func (t *Tree) getNode(id NodeID) (*Node, error) {
 }
 
 // AddChild appends a message as a child of the given parent node.
-func (t *Tree) AddChild(parentID NodeID, msg Message) (*Node, error) {
+func (t *Tree) AddChild(parentID core.NodeID, msg core.Message) (*core.Node, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -110,16 +112,16 @@ func (t *Tree) AddChild(parentID NodeID, msg Message) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	if parent.State == NodeArchived {
+	if parent.State == core.NodeArchived {
 		return nil, fmt.Errorf("%w: %s", ErrNodeArchived, parentID)
 	}
 
 	now := time.Now()
-	child := &Node{
-		ID:        NodeID(NewID()),
+	child := &core.Node{
+		ID:        core.NodeID(core.NewID()),
 		ParentID:  parentID,
 		Message:   msg,
-		State:     NodeActive,
+		State:     core.NodeActive,
 		Version:   1,
 		Depth:     parent.Depth + 1,
 		BranchID:  parent.BranchID,
@@ -139,7 +141,7 @@ func (t *Tree) AddChild(parentID NodeID, msg Message) (*Node, error) {
 }
 
 // Branch creates a new branch diverging from the given node.
-func (t *Tree) Branch(fromNodeID NodeID, name string, msg Message) (BranchID, *Node, error) {
+func (t *Tree) Branch(fromNodeID core.NodeID, name string, msg core.Message) (core.BranchID, *core.Node, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -147,21 +149,21 @@ func (t *Tree) Branch(fromNodeID NodeID, name string, msg Message) (BranchID, *N
 	if err != nil {
 		return "", nil, err
 	}
-	if from.State == NodeArchived {
+	if from.State == core.NodeArchived {
 		return "", nil, fmt.Errorf("%w: %s", ErrNodeArchived, fromNodeID)
 	}
 
-	branchID := BranchID(name)
+	branchID := core.BranchID(name)
 	if _, exists := t.branches[branchID]; exists {
-		branchID = BranchID(fmt.Sprintf("%s-%s", name, NewID()[:8]))
+		branchID = core.BranchID(fmt.Sprintf("%s-%s", name, core.NewID()[:8]))
 	}
 
 	now := time.Now()
-	child := &Node{
-		ID:        NodeID(NewID()),
+	child := &core.Node{
+		ID:        core.NodeID(core.NewID()),
 		ParentID:  fromNodeID,
 		Message:   msg,
-		State:     NodeActive,
+		State:     core.NodeActive,
 		Version:   1,
 		Depth:     from.Depth + 1,
 		BranchID:  branchID,
@@ -181,7 +183,7 @@ func (t *Tree) Branch(fromNodeID NodeID, name string, msg Message) (BranchID, *N
 }
 
 // UpdateUserMessage edits a user message by creating a new branch from the parent.
-func (t *Tree) UpdateUserMessage(nodeID NodeID, newMsg UserMessage) (BranchID, *Node, error) {
+func (t *Tree) UpdateUserMessage(nodeID core.NodeID, newMsg core.UserMessage) (core.BranchID, *core.Node, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -192,7 +194,7 @@ func (t *Tree) UpdateUserMessage(nodeID NodeID, newMsg UserMessage) (BranchID, *
 	if node.ParentID == "" {
 		return "", nil, fmt.Errorf("%w: cannot update root", ErrRootImmutable)
 	}
-	if _, ok := node.Message.(UserMessage); !ok {
+	if _, ok := node.Message.(core.UserMessage); !ok {
 		return "", nil, fmt.Errorf("%w: node is not a user message", ErrInvalidBranchPoint)
 	}
 
@@ -201,13 +203,13 @@ func (t *Tree) UpdateUserMessage(nodeID NodeID, newMsg UserMessage) (BranchID, *
 		return "", nil, err
 	}
 
-	branchID := BranchID(fmt.Sprintf("edit-%s", NewID()[:8]))
+	branchID := core.BranchID(fmt.Sprintf("edit-%s", core.NewID()[:8]))
 	now := time.Now()
-	child := &Node{
-		ID:        NodeID(NewID()),
+	child := &core.Node{
+		ID:        core.NodeID(core.NewID()),
 		ParentID:  node.ParentID,
 		Message:   newMsg,
-		State:     NodeActive,
+		State:     core.NodeActive,
 		Version:   1,
 		Depth:     parent.Depth + 1,
 		BranchID:  branchID,
@@ -227,7 +229,7 @@ func (t *Tree) UpdateUserMessage(nodeID NodeID, newMsg UserMessage) (BranchID, *
 }
 
 // Tip returns the tip node of the given branch.
-func (t *Tree) Tip(branch BranchID) (*Node, error) {
+func (t *Tree) Tip(branch core.BranchID) (*core.Node, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -239,14 +241,14 @@ func (t *Tree) Tip(branch BranchID) (*Node, error) {
 }
 
 // Path returns the node IDs from root to the given node.
-func (t *Tree) Path(nodeID NodeID) ([]NodeID, error) {
+func (t *Tree) Path(nodeID core.NodeID) ([]core.NodeID, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.pathUnlocked(nodeID)
 }
 
-func (t *Tree) pathUnlocked(nodeID NodeID) ([]NodeID, error) {
-	var path []NodeID
+func (t *Tree) pathUnlocked(nodeID core.NodeID) ([]core.NodeID, error) {
+	var path []core.NodeID
 	current := nodeID
 	for current != "" {
 		node, err := t.getNode(current)
@@ -264,7 +266,7 @@ func (t *Tree) pathUnlocked(nodeID NodeID) ([]NodeID, error) {
 }
 
 // Children returns the child nodes of the given node.
-func (t *Tree) Children(nodeID NodeID) ([]*Node, error) {
+func (t *Tree) Children(nodeID core.NodeID) ([]*core.Node, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -273,7 +275,7 @@ func (t *Tree) Children(nodeID NodeID) ([]*Node, error) {
 	}
 
 	childIDs := t.children[nodeID]
-	result := make([]*Node, 0, len(childIDs))
+	result := make([]*core.Node, 0, len(childIDs))
 	for _, cid := range childIDs {
 		if n, ok := t.nodes[cid]; ok {
 			result = append(result, n)
@@ -283,11 +285,11 @@ func (t *Tree) Children(nodeID NodeID) ([]*Node, error) {
 }
 
 // Branches returns a copy of the branch-to-tip mapping.
-func (t *Tree) Branches() map[BranchID]NodeID {
+func (t *Tree) Branches() map[core.BranchID]core.NodeID {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	result := make(map[BranchID]NodeID, len(t.branches))
+	result := make(map[core.BranchID]core.NodeID, len(t.branches))
 	for k, v := range t.branches {
 		result[k] = v
 	}
@@ -295,7 +297,7 @@ func (t *Tree) Branches() map[BranchID]NodeID {
 }
 
 // Archive soft-deletes a node. If recursive is true, all descendants are also archived.
-func (t *Tree) Archive(nodeID NodeID, archivedBy string, recursive bool) error {
+func (t *Tree) Archive(nodeID core.NodeID, archivedBy string, recursive bool) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -310,9 +312,9 @@ func (t *Tree) Archive(nodeID NodeID, archivedBy string, recursive bool) error {
 	return t.archiveNode(node, archivedBy, recursive)
 }
 
-func (t *Tree) archiveNode(node *Node, archivedBy string, recursive bool) error {
+func (t *Tree) archiveNode(node *core.Node, archivedBy string, recursive bool) error {
 	now := time.Now()
-	node.State = NodeArchived
+	node.State = core.NodeArchived
 	node.ArchivedAt = &now
 	node.ArchivedBy = archivedBy
 	node.Version++
@@ -333,7 +335,7 @@ func (t *Tree) archiveNode(node *Node, archivedBy string, recursive bool) error 
 }
 
 // Restore un-archives a node. If recursive is true, all descendants are also restored.
-func (t *Tree) Restore(nodeID NodeID, recursive bool) error {
+func (t *Tree) Restore(nodeID core.NodeID, recursive bool) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -345,9 +347,9 @@ func (t *Tree) Restore(nodeID NodeID, recursive bool) error {
 	return t.restoreNode(node, recursive)
 }
 
-func (t *Tree) restoreNode(node *Node, recursive bool) error {
+func (t *Tree) restoreNode(node *core.Node, recursive bool) error {
 	now := time.Now()
-	node.State = NodeActive
+	node.State = core.NodeActive
 	node.ArchivedAt = nil
 	node.ArchivedBy = ""
 	node.Version++
@@ -368,7 +370,7 @@ func (t *Tree) restoreNode(node *Node, recursive bool) error {
 }
 
 // Checkpoint creates a named checkpoint at the current tip of a branch.
-func (t *Tree) Checkpoint(branch BranchID, name string) (CheckpointID, error) {
+func (t *Tree) Checkpoint(branch core.BranchID, name string) (core.CheckpointID, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -377,8 +379,8 @@ func (t *Tree) Checkpoint(branch BranchID, name string) (CheckpointID, error) {
 		return "", fmt.Errorf("%w: %s", ErrBranchNotFound, branch)
 	}
 
-	cpID := CheckpointID(NewID())
-	cp := Checkpoint{
+	cpID := core.CheckpointID(core.NewID())
+	cp := core.Checkpoint{
 		ID:        cpID,
 		Branch:    branch,
 		NodeID:    tipID,
@@ -391,7 +393,7 @@ func (t *Tree) Checkpoint(branch BranchID, name string) (CheckpointID, error) {
 }
 
 // Rewind creates a new branch starting from the checkpoint's node.
-func (t *Tree) Rewind(cp CheckpointID) (BranchID, error) {
+func (t *Tree) Rewind(cp core.CheckpointID) (core.BranchID, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -404,29 +406,29 @@ func (t *Tree) Rewind(cp CheckpointID) (BranchID, error) {
 		return "", err
 	}
 
-	branchID := BranchID(fmt.Sprintf("rewind-%s-%s", checkpoint.Name, NewID()[:8]))
+	branchID := core.BranchID(fmt.Sprintf("rewind-%s-%s", checkpoint.Name, core.NewID()[:8]))
 	t.branches[branchID] = checkpoint.NodeID
 
 	return branchID, nil
 }
 
 // NodePath returns the TreePath (child indices from root) for the given node.
-func (t *Tree) NodePath(nodeID NodeID) (TreePath, error) {
+func (t *Tree) NodePath(nodeID core.NodeID) (core.TreePath, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.nodePathUnlocked(nodeID)
 }
 
-func (t *Tree) nodePathUnlocked(nodeID NodeID) (TreePath, error) {
+func (t *Tree) nodePathUnlocked(nodeID core.NodeID) (core.TreePath, error) {
 	nodePath, err := t.pathUnlocked(nodeID)
 	if err != nil {
 		return nil, err
 	}
 	if len(nodePath) <= 1 {
-		return TreePath{}, nil // root has empty path
+		return core.TreePath{}, nil // root has empty path
 	}
 
-	treePath := make(TreePath, 0, len(nodePath)-1)
+	treePath := make(core.TreePath, 0, len(nodePath)-1)
 	for i := 1; i < len(nodePath); i++ {
 		parentID := nodePath[i-1]
 		childID := nodePath[i]
@@ -447,7 +449,7 @@ func (t *Tree) nodePathUnlocked(nodeID NodeID) (TreePath, error) {
 }
 
 // walAddNode writes a node addition to the WAL if configured.
-func (t *Tree) walAddNode(node *Node) error {
+func (t *Tree) walAddNode(node *core.Node) error {
 	if t.wal == nil {
 		return nil
 	}
@@ -455,7 +457,7 @@ func (t *Tree) walAddNode(node *Node) error {
 	if err != nil {
 		return err
 	}
-	if err := t.wal.Append(txID, TxOp{Kind: TxOpAddNode, Node: node}); err != nil {
+	if err := t.wal.Append(txID, core.TxOp{Kind: core.TxOpAddNode, Node: node}); err != nil {
 		_ = t.wal.Abort(txID)
 		return err
 	}

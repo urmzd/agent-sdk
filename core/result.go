@@ -1,4 +1,4 @@
-package agentsdk
+package core
 
 // ResultKind distinguishes intermediate from terminal results.
 type ResultKind string

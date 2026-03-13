@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- **core**: add `FileContent` and `MediaType` for file upload support
+- **core**: add `Embedder` interface for vector embeddings
+- **core**: add `Resolver` and `Extractor` interfaces for pluggable content handling
+- **core**: add `ContentNegotiator` interface for provider-aware content negotiation
+- **provider**: add `ResolverRegistry`, `ExtractorRegistry`, and `PrepareMessages` for content preparation
+- **provider**: add built-in `file://` and `http(s)://` URI resolvers
+- **ollama**: add `OllamaEmbedder` implementing `core.Embedder`
+- **ollama**: implement `ContentNegotiator` with native JPEG/PNG support
+- **agent**: add `Resolvers` and `Extractors` to `AgentConfig` with automatic content preparation in agent loop
+
 ## 0.2.0 (2026-03-12)
 
 ### Features

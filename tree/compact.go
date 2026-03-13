@@ -1,10 +1,12 @@
-package agentsdk
+package tree
 
 import (
 	"context"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/urmzd/agent-sdk/core"
 )
 
 // CompactOpts configures tree-aware compaction.
@@ -17,7 +19,7 @@ type CompactOpts struct {
 // when the total token count exceeds MaxTokens. Instead of mutating the branch
 // in-place, it creates a new compacted branch and sets it as active.
 // Returns the new branch ID, or the original branch if no compaction was needed.
-func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, tokenizer Tokenizer, opts CompactOpts) (BranchID, error) {
+func (t *Tree) Compact(ctx context.Context, branch core.BranchID, provider core.Provider, tokenizer core.Tokenizer, opts CompactOpts) (core.BranchID, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -32,10 +34,10 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 	}
 
 	// Collect messages for token counting.
-	messages := make([]Message, 0, len(path))
+	messages := make([]core.Message, 0, len(path))
 	for _, nid := range path {
 		node := t.nodes[nid]
-		if node.State == NodeArchived {
+		if node.State == core.NodeArchived {
 			continue
 		}
 		messages = append(messages, node.Message)
@@ -51,7 +53,7 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 	}
 
 	// Identify nodes shared across other branches if PreserveShared.
-	shared := make(map[NodeID]bool)
+	shared := make(map[core.NodeID]bool)
 	if opts.PreserveShared {
 		for brID, brTip := range t.branches {
 			if brID == branch {
@@ -69,8 +71,8 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 
 	// Build list of active, non-root, non-shared node IDs on the path.
 	type candidate struct {
-		id   NodeID
-		node *Node
+		id   core.NodeID
+		node *core.Node
 	}
 	var candidates []candidate
 	for _, nid := range path {
@@ -78,7 +80,7 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 		if node.ParentID == "" {
 			continue // never compact root
 		}
-		if node.State != NodeActive {
+		if node.State != core.NodeActive {
 			continue
 		}
 		if opts.PreserveShared && shared[nid] {
@@ -91,9 +93,7 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 		return branch, nil
 	}
 
-	// Find the smallest prefix of candidates to summarize that brings tokens under budget.
-	// We try progressively larger prefixes until summarization would fit.
-	// For simplicity, we compact the first half of candidates (or at least 1).
+	// Compact the first half of candidates (or at least 1).
 	compactCount := len(candidates) / 2
 	if compactCount < 1 {
 		compactCount = 1
@@ -101,17 +101,17 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 	toCompact := candidates[:compactCount]
 
 	// Summarize the run via provider.
-	msgs := make([]Message, 0, len(toCompact))
-	nodeIDs := make([]NodeID, 0, len(toCompact))
+	msgs := make([]core.Message, 0, len(toCompact))
+	nodeIDs := make([]core.NodeID, 0, len(toCompact))
 	for _, c := range toCompact {
 		msgs = append(msgs, c.node.Message)
 		nodeIDs = append(nodeIDs, c.id)
 	}
 
-	summaryText := messagesToText(msgs)
-	summaryReq := []Message{
-		NewSystemMessage("Summarize the following conversation concisely, preserving key facts and decisions."),
-		NewUserMessage(summaryText),
+	summaryText := core.MessagesToText(msgs)
+	summaryReq := []core.Message{
+		core.NewSystemMessage("Summarize the following conversation concisely, preserving key facts and decisions."),
+		core.NewUserMessage(summaryText),
 	}
 
 	rx, err := provider.ChatStream(ctx, summaryReq, nil)
@@ -121,7 +121,7 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 
 	var summaryBuf strings.Builder
 	for delta := range rx {
-		if tc, ok := delta.(TextContentDelta); ok {
+		if tc, ok := delta.(core.TextContentDelta); ok {
 			summaryBuf.WriteString(tc.Content)
 		}
 	}
@@ -131,14 +131,14 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 	first := toCompact[0]
 	last := toCompact[len(toCompact)-1]
 
-	newBranchID := BranchID(fmt.Sprintf("compact-%s-%s", branch, NewID()[:8]))
+	newBranchID := core.BranchID(fmt.Sprintf("compact-%s-%s", branch, core.NewID()[:8]))
 
 	now := time.Now()
-	summaryNode := &Node{
-		ID:        NodeID(NewID()),
+	summaryNode := &core.Node{
+		ID:        core.NodeID(core.NewID()),
 		ParentID:  first.node.ParentID,
-		Message:   NewUserMessage("Summary of previous conversation: " + summary),
-		State:     NodeCompacted,
+		Message:   core.NewUserMessage("Summary of previous conversation: " + summary),
+		State:     core.NodeCompacted,
 		Version:   1,
 		Depth:     first.node.Depth,
 		BranchID:  newBranchID,
@@ -151,8 +151,7 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 	t.children[first.node.ParentID] = append(t.children[first.node.ParentID], summaryNode.ID)
 
 	// Re-link remaining (non-compacted) nodes after the compacted prefix onto the new branch.
-	// Find nodes on the path after the last compacted node.
-	var remaining []NodeID
+	var remaining []core.NodeID
 	pastCompacted := false
 	for _, nid := range path {
 		if nid == last.id {
@@ -166,17 +165,17 @@ func (t *Tree) Compact(ctx context.Context, branch BranchID, provider Provider, 
 
 	// Clone remaining nodes onto the new branch.
 	prevID := summaryNode.ID
-	var newTipID NodeID
+	var newTipID core.NodeID
 	if len(remaining) == 0 {
 		newTipID = summaryNode.ID
 	} else {
 		for _, nid := range remaining {
 			orig := t.nodes[nid]
-			cloned := &Node{
-				ID:        NodeID(NewID()),
+			cloned := &core.Node{
+				ID:        core.NodeID(core.NewID()),
 				ParentID:  prevID,
 				Message:   orig.Message,
-				State:     NodeActive,
+				State:     core.NodeActive,
 				Version:   1,
 				Depth:     orig.Depth,
 				BranchID:  newBranchID,

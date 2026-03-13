@@ -1,13 +1,15 @@
-package agentsdk
+package retry
 
 import (
 	"context"
 	"math"
 	"time"
+
+	"github.com/urmzd/agent-sdk/core"
 )
 
-// RetryConfig controls retry behavior.
-type RetryConfig struct {
+// Config controls retry behavior.
+type Config struct {
 	MaxAttempts int           // total attempts (1 = no retry)
 	BaseDelay   time.Duration // initial delay between retries
 	MaxDelay    time.Duration // cap on delay
@@ -15,10 +17,10 @@ type RetryConfig struct {
 	ShouldRetry func(error) bool // nil = retry on IsTransient errors
 }
 
-// DefaultRetryConfig returns sensible defaults: 3 attempts, 500ms base,
+// DefaultConfig returns sensible defaults: 3 attempts, 500ms base,
 // 10s cap, 2x exponential backoff, transient-only.
-func DefaultRetryConfig() RetryConfig {
-	return RetryConfig{
+func DefaultConfig() Config {
+	return Config{
 		MaxAttempts: 3,
 		BaseDelay:   500 * time.Millisecond,
 		MaxDelay:    10 * time.Second,
@@ -26,14 +28,14 @@ func DefaultRetryConfig() RetryConfig {
 	}
 }
 
-// RetryProvider wraps a Provider with retry logic and exponential backoff.
-type RetryProvider struct {
-	Inner  Provider
-	Config RetryConfig
+// Provider wraps a Provider with retry logic and exponential backoff.
+type Provider struct {
+	Inner  core.Provider
+	Config Config
 }
 
-// NewRetryProvider wraps a provider with the given retry config.
-func NewRetryProvider(inner Provider, cfg RetryConfig) *RetryProvider {
+// New wraps a provider with the given retry config.
+func New(inner core.Provider, cfg Config) *Provider {
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 3
 	}
@@ -46,17 +48,17 @@ func NewRetryProvider(inner Provider, cfg RetryConfig) *RetryProvider {
 	if cfg.MaxDelay <= 0 {
 		cfg.MaxDelay = 10 * time.Second
 	}
-	return &RetryProvider{Inner: inner, Config: cfg}
+	return &Provider{Inner: inner, Config: cfg}
 }
 
-func (r *RetryProvider) Name() string {
-	return "retry(" + providerName(r.Inner) + ")"
+func (r *Provider) Name() string {
+	return "retry(" + core.ProviderName(r.Inner) + ")"
 }
 
-func (r *RetryProvider) ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan Delta, error) {
+func (r *Provider) ChatStream(ctx context.Context, messages []core.Message, tools []core.ToolDef) (<-chan core.Delta, error) {
 	shouldRetry := r.Config.ShouldRetry
 	if shouldRetry == nil {
-		shouldRetry = IsTransient
+		shouldRetry = core.IsTransient
 	}
 
 	var lastErr error
@@ -88,5 +90,5 @@ func (r *RetryProvider) ChatStream(ctx context.Context, messages []Message, tool
 		}
 	}
 
-	return nil, &RetryError{Attempts: r.Config.MaxAttempts, Last: lastErr}
+	return nil, &core.RetryError{Attempts: r.Config.MaxAttempts, Last: lastErr}
 }

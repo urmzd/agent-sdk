@@ -1,15 +1,18 @@
-package agentsdk
+package tree
 
 import (
 	"context"
 	"sync"
 	"testing"
+
+	"github.com/urmzd/agent-sdk/core"
+	"github.com/urmzd/agent-sdk/store/memwal"
 )
 
 func TestNewTree(t *testing.T) {
-	tree, err := NewTree(NewSystemMessage("You are a helper."))
+	tree, err := New(core.NewSystemMessage("You are a helper."))
 	if err != nil {
-		t.Fatalf("NewTree: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	root := tree.Root()
 	if root == nil {
@@ -18,7 +21,7 @@ func TestNewTree(t *testing.T) {
 	if root.Depth != 0 {
 		t.Errorf("root depth = %d, want 0", root.Depth)
 	}
-	if _, ok := root.Message.(SystemMessage); !ok {
+	if _, ok := root.Message.(core.SystemMessage); !ok {
 		t.Error("root message is not SystemMessage")
 	}
 	branches := tree.Branches()
@@ -28,11 +31,11 @@ func TestNewTree(t *testing.T) {
 }
 
 func TestAddChildAndPath(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
 	// Add user message
-	user, err := tree.AddChild(root.ID, NewUserMessage("hello"))
+	user, err := tree.AddChild(root.ID, core.NewUserMessage("hello"))
 	if err != nil {
 		t.Fatalf("AddChild user: %v", err)
 	}
@@ -41,8 +44,8 @@ func TestAddChildAndPath(t *testing.T) {
 	}
 
 	// Add assistant message
-	asst, err := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi there"}},
+	asst, err := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi there"}},
 	})
 	if err != nil {
 		t.Fatalf("AddChild assistant: %v", err)
@@ -68,12 +71,12 @@ func TestAddChildAndPath(t *testing.T) {
 }
 
 func TestFlatten(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	asst, _ := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	asst, _ := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
 	msgs, err := tree.Flatten(asst.ID)
@@ -83,21 +86,21 @@ func TestFlatten(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("flatten length = %d, want 3", len(msgs))
 	}
-	if msgs[0].Role() != RoleSystem {
+	if msgs[0].Role() != core.RoleSystem {
 		t.Error("msgs[0] not system")
 	}
-	if msgs[1].Role() != RoleUser {
+	if msgs[1].Role() != core.RoleUser {
 		t.Error("msgs[1] not user")
 	}
-	if msgs[2].Role() != RoleAssistant {
+	if msgs[2].Role() != core.RoleAssistant {
 		t.Error("msgs[2] not assistant")
 	}
 }
 
 func TestFlattenBranch(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
-	tree.AddChild(root.ID, NewUserMessage("hello"))
+	tree.AddChild(root.ID, core.NewUserMessage("hello"))
 
 	msgs, err := tree.FlattenBranch("main")
 	if err != nil {
@@ -109,16 +112,16 @@ func TestFlattenBranch(t *testing.T) {
 }
 
 func TestBranch(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	asst, _ := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	asst, _ := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
 	// Branch from assistant message
-	branchID, branchNode, err := tree.Branch(asst.ID, "alt", NewUserMessage("different question"))
+	branchID, branchNode, err := tree.Branch(asst.ID, "alt", core.NewUserMessage("different question"))
 	if err != nil {
 		t.Fatalf("Branch: %v", err)
 	}
@@ -149,12 +152,12 @@ func TestBranch(t *testing.T) {
 }
 
 func TestUpdateUserMessage(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("original"))
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("original"))
 
-	newBranch, newNode, err := tree.UpdateUserMessage(user.ID, NewUserMessage("edited"))
+	newBranch, newNode, err := tree.UpdateUserMessage(user.ID, core.NewUserMessage("edited"))
 	if err != nil {
 		t.Fatalf("UpdateUserMessage: %v", err)
 	}
@@ -174,11 +177,11 @@ func TestUpdateUserMessage(t *testing.T) {
 	}
 
 	// Check the edited message content
-	um, ok := editMsgs[1].(UserMessage)
+	um, ok := editMsgs[1].(core.UserMessage)
 	if !ok {
 		t.Fatal("edit msgs[1] not UserMessage")
 	}
-	tc, ok := um.Content[0].(TextContent)
+	tc, ok := um.Content[0].(core.TextContent)
 	if !ok {
 		t.Fatal("edit msg content not TextContent")
 	}
@@ -188,36 +191,36 @@ func TestUpdateUserMessage(t *testing.T) {
 }
 
 func TestUpdateUserMessage_NotUserMessage(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	asst, _ := tree.AddChild(root.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	asst, _ := tree.AddChild(root.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
-	_, _, err := tree.UpdateUserMessage(asst.ID, NewUserMessage("edited"))
+	_, _, err := tree.UpdateUserMessage(asst.ID, core.NewUserMessage("edited"))
 	if err == nil {
 		t.Fatal("expected error for non-user message")
 	}
 }
 
 func TestUpdateUserMessage_Root(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	_, _, err := tree.UpdateUserMessage(root.ID, NewUserMessage("edited"))
+	_, _, err := tree.UpdateUserMessage(root.ID, core.NewUserMessage("edited"))
 	if err == nil {
 		t.Fatal("expected error for root update")
 	}
 }
 
 func TestArchiveAndRestore(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	asst, _ := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	asst, _ := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
 	// Archive the user node recursively
@@ -243,7 +246,7 @@ func TestArchiveAndRestore(t *testing.T) {
 }
 
 func TestArchiveRoot(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
 	err := tree.Archive(root.ID, "test", false)
@@ -253,12 +256,12 @@ func TestArchiveRoot(t *testing.T) {
 }
 
 func TestCheckpointAndRewind(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
 	// Checkpoint at current tip
@@ -269,7 +272,7 @@ func TestCheckpointAndRewind(t *testing.T) {
 
 	// Add more messages
 	tip, _ := tree.Tip("main")
-	tree.AddChild(tip.ID, NewUserMessage("more stuff"))
+	tree.AddChild(tip.ID, core.NewUserMessage("more stuff"))
 
 	mainMsgs, _ := tree.FlattenBranch("main")
 	if len(mainMsgs) != 4 {
@@ -289,11 +292,11 @@ func TestCheckpointAndRewind(t *testing.T) {
 }
 
 func TestChildren(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	tree.AddChild(root.ID, NewUserMessage("a"))
-	tree.AddChild(root.ID, NewUserMessage("b"))
+	tree.AddChild(root.ID, core.NewUserMessage("a"))
+	tree.AddChild(root.ID, core.NewUserMessage("b"))
 
 	children, err := tree.Children(root.ID)
 	if err != nil {
@@ -305,16 +308,16 @@ func TestChildren(t *testing.T) {
 }
 
 func TestNodeNotFound(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 
-	_, err := tree.AddChild("nonexistent", NewUserMessage("hello"))
+	_, err := tree.AddChild("nonexistent", core.NewUserMessage("hello"))
 	if err == nil {
 		t.Fatal("expected ErrNodeNotFound")
 	}
 }
 
 func TestTipBranchNotFound(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 
 	_, err := tree.Tip("nonexistent")
 	if err == nil {
@@ -323,12 +326,12 @@ func TestTipBranchNotFound(t *testing.T) {
 }
 
 func TestConcurrentBranchWrites(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	asst, _ := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	asst, _ := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
 	// Concurrent writes to different branches should succeed.
@@ -338,7 +341,7 @@ func TestConcurrentBranchWrites(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			_, _, err := tree.Branch(asst.ID, "concurrent", NewUserMessage("branch"))
+			_, _, err := tree.Branch(asst.ID, "concurrent", core.NewUserMessage("branch"))
 			errors[idx] = err
 		}(i)
 	}
@@ -358,11 +361,11 @@ func TestConcurrentBranchWrites(t *testing.T) {
 }
 
 func TestTreeWithWAL(t *testing.T) {
-	wal := NewInMemoryWAL()
-	tree, _ := NewTree(NewSystemMessage("system"), WithWAL(wal))
+	wal := memwal.New()
+	tree, _ := New(core.NewSystemMessage("system"), WithWAL(wal))
 	root := tree.Root()
 
-	tree.AddChild(root.ID, NewUserMessage("hello"))
+	tree.AddChild(root.ID, core.NewUserMessage("hello"))
 
 	// Verify WAL recorded transactions
 	committed, _ := wal.Recover()
@@ -374,61 +377,61 @@ func TestTreeWithWAL(t *testing.T) {
 	if len(ops) != 1 {
 		t.Errorf("ops = %d, want 1", len(ops))
 	}
-	if ops[0].Kind != TxOpAddNode {
-		t.Errorf("op kind = %s, want %s", ops[0].Kind, TxOpAddNode)
+	if ops[0].Kind != core.TxOpAddNode {
+		t.Errorf("op kind = %s, want %s", ops[0].Kind, core.TxOpAddNode)
 	}
 }
 
 func TestAddChildToArchivedNode(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
 	tree.Archive(user.ID, "test", false)
 
-	_, err := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	_, err := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 	if err == nil {
 		t.Fatal("expected error adding child to archived node")
 	}
 }
 
-// mockProvider implements Provider for testing.
+// mockProvider implements core.Provider for testing.
 type mockProvider struct {
 	response string
 }
 
-func (m *mockProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
-	ch := make(chan Delta, 3)
-	ch <- TextStartDelta{}
-	ch <- TextContentDelta{Content: m.response}
-	ch <- TextEndDelta{}
+func (m *mockProvider) ChatStream(_ context.Context, _ []core.Message, _ []core.ToolDef) (<-chan core.Delta, error) {
+	ch := make(chan core.Delta, 3)
+	ch <- core.TextStartDelta{}
+	ch <- core.TextContentDelta{Content: m.response}
+	ch <- core.TextEndDelta{}
 	close(ch)
 	return ch, nil
 }
 
-// mockTokenizer implements Tokenizer for testing.
+// mockTokenizer implements core.Tokenizer for testing.
 type mockTokenizer struct {
 	tokensPerMessage int
 }
 
-func (m *mockTokenizer) CountTokens(_ context.Context, messages []Message) (int, error) {
+func (m *mockTokenizer) CountTokens(_ context.Context, messages []core.Message) (int, error) {
 	return len(messages) * m.tokensPerMessage, nil
 }
 
 func TestCompaction(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
 	// Build a conversation with several turns.
 	current := root
 	for i := range 6 {
-		var msg Message
+		var msg core.Message
 		if i%2 == 0 {
-			msg = NewUserMessage("user message")
+			msg = core.NewUserMessage("user message")
 		} else {
-			msg = AssistantMessage{Content: []AssistantContent{TextContent{Text: "assistant reply"}}}
+			msg = core.AssistantMessage{Content: []core.AssistantContent{core.TextContent{Text: "assistant reply"}}}
 		}
 		node, err := tree.AddChild(current.ID, msg)
 		if err != nil {
@@ -477,10 +480,10 @@ func TestCompaction(t *testing.T) {
 }
 
 func TestCompactionUnderBudget(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	tree.AddChild(root.ID, NewUserMessage("hello"))
+	tree.AddChild(root.ID, core.NewUserMessage("hello"))
 
 	provider := &mockProvider{response: "summary"}
 	tokenizer := &mockTokenizer{tokensPerMessage: 10} // 2 messages * 10 = 20 tokens
@@ -498,18 +501,18 @@ func TestCompactionUnderBudget(t *testing.T) {
 }
 
 func TestCompactionPreservesShared(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
 	// Build shared history.
-	user, _ := tree.AddChild(root.ID, NewUserMessage("shared question"))
-	asst, _ := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "shared answer"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("shared question"))
+	asst, _ := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "shared answer"}},
 	})
 
 	// Create two branches from the shared assistant message.
-	branchA, _, _ := tree.Branch(asst.ID, "branchA", NewUserMessage("branch A"))
-	tree.Branch(asst.ID, "branchB", NewUserMessage("branch B"))
+	branchA, _, _ := tree.Branch(asst.ID, "branchA", core.NewUserMessage("branch A"))
+	tree.Branch(asst.ID, "branchB", core.NewUserMessage("branch B"))
 
 	provider := &mockProvider{response: "summary"}
 	tokenizer := &mockTokenizer{tokensPerMessage: 100} // over budget
@@ -528,127 +531,16 @@ func TestCompactionPreservesShared(t *testing.T) {
 	asstNode := tree.nodes[asst.ID]
 	tree.mu.RUnlock()
 
-	if userNode.State != NodeActive {
+	if userNode.State != core.NodeActive {
 		t.Error("shared user node was compacted")
 	}
-	if asstNode.State != NodeActive {
+	if asstNode.State != core.NodeActive {
 		t.Error("shared assistant node was compacted")
 	}
 }
 
-func TestInvoke(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("You are helpful."))
-
-	provider := &mockProvider{response: "Hello!"}
-
-	agent := NewAgent(AgentConfig{
-		Name:         "test",
-		SystemPrompt: "You are helpful.",
-		Provider:     provider,
-		Tree:         tree,
-	})
-
-	stream := agent.Invoke(context.Background(), []Message{
-		NewUserMessage("Hi"),
-	})
-
-	// Consume all deltas.
-	for range stream.Deltas() {
-	}
-
-	if err := stream.Wait(); err != nil {
-		t.Fatalf("Invoke: %v", err)
-	}
-
-	// Verify tree has the conversation persisted.
-	msgs, err := tree.FlattenBranch("main")
-	if err != nil {
-		t.Fatalf("FlattenBranch: %v", err)
-	}
-
-	// Should have: system + user("Hi") + assistant("Hello!")
-	if len(msgs) != 3 {
-		t.Fatalf("messages = %d, want 3", len(msgs))
-	}
-	if msgs[0].Role() != RoleSystem {
-		t.Error("msgs[0] not system")
-	}
-	if msgs[1].Role() != RoleUser {
-		t.Error("msgs[1] not user")
-	}
-	if msgs[2].Role() != RoleAssistant {
-		t.Error("msgs[2] not assistant")
-	}
-}
-
-func TestInvokeOnExplicitBranch(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("You are helpful."))
-	root := tree.Root()
-
-	// Set up a side branch.
-	user, _ := tree.AddChild(root.ID, NewUserMessage("setup"))
-	asst, _ := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "ok"}},
-	})
-	branchID, _, _ := tree.Branch(asst.ID, "side", NewUserMessage("side question"))
-
-	provider := &mockProvider{response: "side answer"}
-
-	agent := NewAgent(AgentConfig{
-		Name:         "test",
-		SystemPrompt: "You are helpful.",
-		Provider:     provider,
-		Tree:         tree,
-	})
-
-	stream := agent.Invoke(context.Background(), []Message{}, branchID)
-	for range stream.Deltas() {
-	}
-	stream.Wait()
-
-	msgs, _ := tree.FlattenBranch(branchID)
-	// system + setup user + setup asst + side question + side answer
-	if len(msgs) != 5 {
-		t.Fatalf("messages = %d, want 5", len(msgs))
-	}
-}
-
-func TestInvokeAutoCreatesTree(t *testing.T) {
-	provider := &mockProvider{response: "Hello!"}
-
-	agent := NewAgent(AgentConfig{
-		Name:         "test",
-		SystemPrompt: "You are helpful.",
-		Provider:     provider,
-	})
-
-	// Tree should be auto-created.
-	if agent.Tree() == nil {
-		t.Fatal("expected auto-created tree")
-	}
-
-	stream := agent.Invoke(context.Background(), []Message{
-		NewUserMessage("Hi"),
-	})
-
-	for range stream.Deltas() {
-	}
-
-	if err := stream.Wait(); err != nil {
-		t.Fatalf("Invoke: %v", err)
-	}
-
-	msgs, err := agent.Tree().FlattenBranch("main")
-	if err != nil {
-		t.Fatalf("FlattenBranch: %v", err)
-	}
-	if len(msgs) != 3 { // system + user + assistant
-		t.Fatalf("messages = %d, want 3", len(msgs))
-	}
-}
-
 func TestInMemoryWAL(t *testing.T) {
-	wal := NewInMemoryWAL()
+	wal := memwal.New()
 
 	// Begin and commit
 	txID, err := wal.Begin()
@@ -656,7 +548,7 @@ func TestInMemoryWAL(t *testing.T) {
 		t.Fatalf("Begin: %v", err)
 	}
 
-	err = wal.Append(txID, TxOp{Kind: TxOpAddNode})
+	err = wal.Append(txID, core.TxOp{Kind: core.TxOpAddNode})
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -668,7 +560,7 @@ func TestInMemoryWAL(t *testing.T) {
 
 	// Begin and abort
 	txID2, _ := wal.Begin()
-	wal.Append(txID2, TxOp{Kind: TxOpSetBranch})
+	wal.Append(txID2, core.TxOp{Kind: core.TxOpSetBranch})
 	wal.Abort(txID2)
 
 	// Recover should only return committed
@@ -684,14 +576,14 @@ func TestInMemoryWAL(t *testing.T) {
 	}
 
 	// Append to committed tx should fail
-	err = wal.Append(txID, TxOp{Kind: TxOpAddNode})
+	err = wal.Append(txID, core.TxOp{Kind: core.TxOpAddNode})
 	if err == nil {
 		t.Fatal("expected error appending to committed tx")
 	}
 }
 
 func TestCheckpointNotFound(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 
 	_, err := tree.Rewind("nonexistent")
 	if err == nil {
@@ -699,17 +591,17 @@ func TestCheckpointNotFound(t *testing.T) {
 	}
 }
 
-// ── TreePath Tests ──────────────────────────────────────────────────
+// -- TreePath Tests --
 
 func TestTreePathString(t *testing.T) {
 	tests := []struct {
-		path TreePath
+		path core.TreePath
 		want string
 	}{
-		{TreePath{}, ""},
-		{TreePath{0}, "0"},
-		{TreePath{0, 1, 2}, "0/1/2"},
-		{TreePath{3, 14, 159}, "3/14/159"},
+		{core.TreePath{}, ""},
+		{core.TreePath{0}, "0"},
+		{core.TreePath{0, 1, 2}, "0/1/2"},
+		{core.TreePath{3, 14, 159}, "3/14/159"},
 	}
 	for _, tt := range tests {
 		got := tt.path.String()
@@ -720,7 +612,7 @@ func TestTreePathString(t *testing.T) {
 }
 
 func TestTreePathRoundTrip(t *testing.T) {
-	paths := []TreePath{
+	paths := []core.TreePath{
 		{},
 		{0},
 		{0, 1, 2},
@@ -728,7 +620,7 @@ func TestTreePathRoundTrip(t *testing.T) {
 	}
 	for _, p := range paths {
 		s := p.String()
-		parsed, err := ParseTreePath(s)
+		parsed, err := core.ParseTreePath(s)
 		if err != nil {
 			t.Fatalf("ParseTreePath(%q): %v", s, err)
 		}
@@ -745,36 +637,36 @@ func TestTreePathRoundTrip(t *testing.T) {
 }
 
 func TestParseTreePathError(t *testing.T) {
-	_, err := ParseTreePath("0/abc/2")
+	_, err := core.ParseTreePath("0/abc/2")
 	if err == nil {
 		t.Fatal("expected error for invalid tree path")
 	}
 }
 
 func TestTreePathParent(t *testing.T) {
-	if p := (TreePath{0, 1, 2}).Parent(); p.String() != "0/1" {
+	if p := (core.TreePath{0, 1, 2}).Parent(); p.String() != "0/1" {
 		t.Errorf("Parent() = %v, want 0/1", p)
 	}
-	if p := (TreePath{0}).Parent(); p != nil {
+	if p := (core.TreePath{0}).Parent(); p != nil {
 		t.Errorf("Parent() of single = %v, want nil", p)
 	}
-	if p := (TreePath{}).Parent(); p != nil {
+	if p := (core.TreePath{}).Parent(); p != nil {
 		t.Errorf("Parent() of empty = %v, want nil", p)
 	}
 }
 
 func TestTreePathIsAncestorOf(t *testing.T) {
 	tests := []struct {
-		a, b TreePath
+		a, b core.TreePath
 		want bool
 	}{
-		{TreePath{0}, TreePath{0, 1}, true},
-		{TreePath{0, 1}, TreePath{0, 1, 2}, true},
-		{TreePath{0, 1, 2}, TreePath{0, 1}, false},     // not strict prefix
-		{TreePath{0, 1}, TreePath{0, 1}, false},         // equal, not strict
-		{TreePath{0, 2}, TreePath{0, 1, 2}, false},      // divergent
-		{TreePath{}, TreePath{0}, true},                  // root is ancestor of everything
-		{TreePath{}, TreePath{}, false},                  // empty not ancestor of itself
+		{core.TreePath{0}, core.TreePath{0, 1}, true},
+		{core.TreePath{0, 1}, core.TreePath{0, 1, 2}, true},
+		{core.TreePath{0, 1, 2}, core.TreePath{0, 1}, false},     // not strict prefix
+		{core.TreePath{0, 1}, core.TreePath{0, 1}, false},         // equal, not strict
+		{core.TreePath{0, 2}, core.TreePath{0, 1, 2}, false},      // divergent
+		{core.TreePath{}, core.TreePath{0}, true},                  // root is ancestor of everything
+		{core.TreePath{}, core.TreePath{}, false},                  // empty not ancestor of itself
 	}
 	for _, tt := range tests {
 		got := tt.a.IsAncestorOf(tt.b)
@@ -784,10 +676,10 @@ func TestTreePathIsAncestorOf(t *testing.T) {
 	}
 }
 
-// ── NodePath Tests ──────────────────────────────────────────────────
+// -- NodePath Tests --
 
 func TestNodePath(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
 	// root path should be empty
@@ -800,8 +692,8 @@ func TestNodePath(t *testing.T) {
 	}
 
 	// Add two children to root
-	a, _ := tree.AddChild(root.ID, NewUserMessage("a"))
-	b, _ := tree.AddChild(root.ID, NewUserMessage("b"))
+	a, _ := tree.AddChild(root.ID, core.NewUserMessage("a"))
+	b, _ := tree.AddChild(root.ID, core.NewUserMessage("b"))
 
 	aPath, _ := tree.NodePath(a.ID)
 	if aPath.String() != "0" {
@@ -814,8 +706,8 @@ func TestNodePath(t *testing.T) {
 	}
 
 	// Add child to a
-	c, _ := tree.AddChild(a.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "c"}},
+	c, _ := tree.AddChild(a.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "c"}},
 	})
 
 	cPath, _ := tree.NodePath(c.ID)
@@ -825,39 +717,35 @@ func TestNodePath(t *testing.T) {
 }
 
 func TestNodePathAfterBranch(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	asst, _ := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	asst, _ := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
 	// Branch from assistant
-	_, branchNode, _ := tree.Branch(asst.ID, "alt", NewUserMessage("different"))
+	_, branchNode, _ := tree.Branch(asst.ID, "alt", core.NewUserMessage("different"))
 
 	branchPath, err := tree.NodePath(branchNode.ID)
 	if err != nil {
 		t.Fatalf("NodePath(branch): %v", err)
 	}
-	// root -> user(0) -> asst(0) -> branch(1) (second child of asst since main tip was first)
-	// Actually main tip is asst itself, so asst has one child from main, then the branch child
-	// Let's check: asst is the tip of main, so no child after it on main.
-	// Branch adds branchNode as child of asst, so it's child index 0.
 	if branchPath.String() != "0/0/0" {
 		t.Errorf("branch path = %v, want 0/0/0", branchPath)
 	}
 }
 
-// ── FlattenAnnotated Tests ──────────────────────────────────────────
+// -- FlattenAnnotated Tests --
 
 func TestFlattenAnnotated(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	asst, _ := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	asst, _ := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
 	annotated, err := tree.FlattenAnnotated(asst.ID)
@@ -900,12 +788,12 @@ func TestFlattenAnnotated(t *testing.T) {
 }
 
 func TestFlattenAnnotatedSkipsArchived(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	asst, _ := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	asst, _ := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
 	tree.Archive(user.ID, "test", false)
@@ -921,9 +809,9 @@ func TestFlattenAnnotatedSkipsArchived(t *testing.T) {
 }
 
 func TestFlattenBranchAnnotated(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
-	tree.AddChild(root.ID, NewUserMessage("hello"))
+	tree.AddChild(root.ID, core.NewUserMessage("hello"))
 
 	annotated, err := tree.FlattenBranchAnnotated("main")
 	if err != nil {
@@ -934,13 +822,13 @@ func TestFlattenBranchAnnotated(t *testing.T) {
 	}
 }
 
-// ── Diff Tests ──────────────────────────────────────────────────────
+// -- Diff Tests --
 
 func TestDiffSameNode(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
 
 	diff, err := tree.Diff(user.ID, user.ID)
 	if err != nil {
@@ -958,20 +846,20 @@ func TestDiffSameNode(t *testing.T) {
 }
 
 func TestDiffBranches(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	asst, _ := tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	asst, _ := tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
 	// Create branch from assistant
-	branchID, _, _ := tree.Branch(asst.ID, "alt", NewUserMessage("different question"))
+	branchID, _, _ := tree.Branch(asst.ID, "alt", core.NewUserMessage("different question"))
 
 	// Add more to main
 	tip, _ := tree.Tip("main")
-	tree.AddChild(tip.ID, NewUserMessage("more on main"))
+	tree.AddChild(tip.ID, core.NewUserMessage("more on main"))
 
 	diff, err := tree.DiffBranches("main", branchID)
 	if err != nil {
@@ -990,19 +878,19 @@ func TestDiffBranches(t *testing.T) {
 }
 
 func TestDiffAfterCheckpointAndRewind(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	tree.AddChild(user.ID, AssistantMessage{
-		Content: []AssistantContent{TextContent{Text: "hi"}},
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	tree.AddChild(user.ID, core.AssistantMessage{
+		Content: []core.AssistantContent{core.TextContent{Text: "hi"}},
 	})
 
 	cpID, _ := tree.Checkpoint("main", "save1")
 
 	// Add more to main
 	tip, _ := tree.Tip("main")
-	tree.AddChild(tip.ID, NewUserMessage("divergent"))
+	tree.AddChild(tip.ID, core.NewUserMessage("divergent"))
 
 	rewindBranch, _ := tree.Rewind(cpID)
 
@@ -1021,7 +909,7 @@ func TestDiffAfterCheckpointAndRewind(t *testing.T) {
 }
 
 func TestDiffBranchNotFound(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 
 	_, err := tree.DiffBranches("main", "nonexistent")
 	if err == nil {
@@ -1029,21 +917,21 @@ func TestDiffBranchNotFound(t *testing.T) {
 	}
 }
 
-// ── Active Cursor Tests ─────────────────────────────────────────────
+// -- Active Cursor Tests --
 
 func TestActiveDefault(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	if tree.Active() != "main" {
 		t.Errorf("default active = %s, want main", tree.Active())
 	}
 }
 
 func TestSetActive(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 	root := tree.Root()
 
-	user, _ := tree.AddChild(root.ID, NewUserMessage("hello"))
-	branchID, _, _ := tree.Branch(user.ID, "alt", NewUserMessage("alt"))
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
+	branchID, _, _ := tree.Branch(user.ID, "alt", core.NewUserMessage("alt"))
 
 	if err := tree.SetActive(branchID); err != nil {
 		t.Fatalf("SetActive: %v", err)
@@ -1054,7 +942,7 @@ func TestSetActive(t *testing.T) {
 }
 
 func TestSetActiveNotFound(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("system"))
+	tree, _ := New(core.NewSystemMessage("system"))
 
 	err := tree.SetActive("nonexistent")
 	if err == nil {
@@ -1062,37 +950,32 @@ func TestSetActiveNotFound(t *testing.T) {
 	}
 }
 
-func TestInvokeUsesActiveCursor(t *testing.T) {
-	tree, _ := NewTree(NewSystemMessage("You are helpful."))
+func TestArchiveVersionIncrement(t *testing.T) {
+	tree, _ := New(core.NewSystemMessage("sys"))
 	root := tree.Root()
+	user, _ := tree.AddChild(root.ID, core.NewUserMessage("hello"))
 
-	// Create a side branch
-	user, _ := tree.AddChild(root.ID, NewUserMessage("setup"))
-	branchID, _, _ := tree.Branch(user.ID, "side", NewUserMessage("side msg"))
+	tree.mu.RLock()
+	initialVersion := tree.nodes[user.ID].Version
+	tree.mu.RUnlock()
 
-	// Set side as active
-	tree.SetActive(branchID)
+	tree.Archive(user.ID, "test", false)
 
-	provider := &mockProvider{response: "side answer"}
-	agent := NewAgent(AgentConfig{
-		Name:         "test",
-		SystemPrompt: "You are helpful.",
-		Provider:     provider,
-		Tree:         tree,
-	})
+	tree.mu.RLock()
+	archivedVersion := tree.nodes[user.ID].Version
+	tree.mu.RUnlock()
 
-	// Invoke without explicit branch — should use active (side)
-	stream := agent.Invoke(context.Background(), []Message{})
-	for range stream.Deltas() {
+	if archivedVersion != initialVersion+1 {
+		t.Errorf("version after archive = %d, want %d", archivedVersion, initialVersion+1)
 	}
-	stream.Wait()
 
-	msgs, _ := tree.FlattenBranch(branchID)
-	// system + setup user + side msg + side answer
-	if len(msgs) != 4 {
-		t.Fatalf("messages = %d, want 4", len(msgs))
-	}
-	if msgs[3].Role() != RoleAssistant {
-		t.Error("last message should be assistant")
+	tree.Restore(user.ID, false)
+
+	tree.mu.RLock()
+	restoredVersion := tree.nodes[user.ID].Version
+	tree.mu.RUnlock()
+
+	if restoredVersion != archivedVersion+1 {
+		t.Errorf("version after restore = %d, want %d", restoredVersion, archivedVersion+1)
 	}
 }

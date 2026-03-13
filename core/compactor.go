@@ -1,4 +1,4 @@
-package agentsdk
+package core
 
 import (
 	"context"
@@ -95,7 +95,7 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 	// Build summary prompt
 	summaryReq := []Message{
 		NewSystemMessage("Summarize the following conversation concisely, preserving key facts and decisions."),
-		NewUserMessage(messagesToText(toSummarize)),
+		NewUserMessage(MessagesToText(toSummarize)),
 	}
 
 	rx, err := provider.ChatStream(ctx, summaryReq, nil)
@@ -118,7 +118,8 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 	return result, nil
 }
 
-func messagesToText(msgs []Message) string {
+// MessagesToText converts messages to a plain-text representation.
+func MessagesToText(msgs []Message) string {
 	var b strings.Builder
 	for _, m := range msgs {
 		switch v := m.(type) {
@@ -150,6 +151,12 @@ func messagesToText(msgs []Message) string {
 					b.WriteString("]: ")
 					b.WriteString(bc.Text)
 					b.WriteByte('\n')
+				case FileContent:
+					b.WriteString("User: [file: ")
+					b.WriteString(bc.Filename)
+					b.WriteString(" (")
+					b.WriteString(string(bc.MediaType))
+					b.WriteString(")]\n")
 				}
 			}
 		case AssistantMessage:

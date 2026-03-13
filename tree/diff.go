@@ -1,6 +1,10 @@
-package agentsdk
+package tree
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/urmzd/agent-sdk/core"
+)
 
 // DiffOp describes whether a node was added or removed between two tree states.
 type DiffOp int
@@ -13,29 +17,29 @@ const (
 // NodeDiff describes a single node difference.
 type NodeDiff struct {
 	Op      DiffOp
-	NodeID  NodeID
-	Path    TreePath
-	Message Message
+	NodeID  core.NodeID
+	Path    core.TreePath
+	Message core.Message
 	Depth   int
 }
 
 // TreeDiff describes the difference between two nodes in the tree.
 type TreeDiff struct {
-	CommonAncestor NodeID
-	CommonPath     []NodeID
+	CommonAncestor core.NodeID
+	CommonPath     []core.NodeID
 	Added          []NodeDiff
 	Removed        []NodeDiff
 }
 
 // Diff computes the difference between two nodes by finding their common
 // ancestor and reporting nodes unique to each path.
-func (t *Tree) Diff(fromNodeID, toNodeID NodeID) (TreeDiff, error) {
+func (t *Tree) Diff(fromNodeID, toNodeID core.NodeID) (TreeDiff, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.diffUnlocked(fromNodeID, toNodeID)
 }
 
-func (t *Tree) diffUnlocked(fromNodeID, toNodeID NodeID) (TreeDiff, error) {
+func (t *Tree) diffUnlocked(fromNodeID, toNodeID core.NodeID) (TreeDiff, error) {
 	fromPath, err := t.pathUnlocked(fromNodeID)
 	if err != nil {
 		return TreeDiff{}, err
@@ -98,7 +102,7 @@ func (t *Tree) diffUnlocked(fromNodeID, toNodeID NodeID) (TreeDiff, error) {
 }
 
 // DiffBranches computes the difference between the tips of two branches.
-func (t *Tree) DiffBranches(a, b BranchID) (TreeDiff, error) {
+func (t *Tree) DiffBranches(a, b core.BranchID) (TreeDiff, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 

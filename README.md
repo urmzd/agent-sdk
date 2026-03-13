@@ -39,6 +39,10 @@ Most LLM SDKs hand you flat, untyped structs and leave you to build the agent lo
 - Structured errors (`ProviderError`, `FallbackError`, `RetryError`) with `errors.Is`/`errors.As` support
 - Error classification (transient vs permanent) for retry/fallback decisions
 - Ollama adapter (implements Provider with `NamedProvider` identification)
+- File upload via `FileContent` — attach files by URI (file://, http://, https://)
+- Content negotiation — providers declare native media type support; unsupported types are handled by pluggable extractors
+- Embeddings via `Embedder` interface — batch-first API, implemented by `OllamaEmbedder`
+- 15 built-in `MediaType` constants covering images, documents, audio, and video
 
 ## Installation
 
@@ -56,7 +60,7 @@ import (
     "fmt"
 
     agentsdk "github.com/urmzd/agent-sdk"
-    "github.com/urmzd/agent-sdk/ollama"
+    "github.com/urmzd/agent-sdk/provider/ollama"
 )
 
 func main() {
@@ -102,7 +106,7 @@ There are three roles. Tool results are not a separate role — they are content
 | Type | Role | Content Types |
 |------|------|---------------|
 | `SystemMessage` | `system` | `TextContent`, `ToolResultContent`, `ConfigContent` |
-| `UserMessage` | `user` | `TextContent`, `ToolResultContent`, `ConfigContent` |
+| `UserMessage` | `user` | `TextContent`, `ToolResultContent`, `ConfigContent`, `FileContent` |
 | `AssistantMessage` | `assistant` | `TextContent`, `ToolUseContent` |
 
 **Why no `ToolResultMessage`?** A tool result is the environment reporting back what happened. When the SDK auto-executes a tool, the result is a `SystemMessage` (no human was involved). When a human provides the result on interrupt, it's a `UserMessage`. The adapter maps both to the wire format the LLM expects.
@@ -136,6 +140,7 @@ Every execution delta carries a `ToolCallID` so consumers can demux parallel too
 | `ToolUseContent` | Assistant | Tool invocation (ID, name, arguments) |
 | `ToolResultContent` | System, User | Tool execution result (ToolCallID, text) |
 | `ConfigContent` | System, User | Runtime configuration (model, max iterations, compaction) |
+| `FileContent` | User | File attachment (URI, MediaType, Data, Filename) |
 
 ## Provider Interface
 
@@ -156,6 +161,119 @@ type NamedProvider interface {
 }
 ```
 
+Providers can optionally implement `ContentNegotiator` to declare which media types they handle natively. When a `FileContent` block is in a message, the SDK checks this interface first. If the provider supports the type natively (e.g., Ollama supports JPEG and PNG via its images field), the `FileContent` is passed through as-is. If not, a registered `Extractor` is used to convert the content. If neither applies, `ErrUnsupportedMediaType` is returned.
+
+```go
+type ContentNegotiator interface {
+    ContentSupport() ContentSupport
+}
+
+// ContentSupport declares which media types a provider handles natively.
+type ContentSupport struct {
+    NativeTypes map[MediaType]bool
+}
+```
+
+## File Upload & Content Negotiation
+
+Attach files to user messages using `FileContent`. The URI is the source of truth — raw bytes are populated at resolution time.
+
+```go
+// Single file by URI (media type inferred from extension)
+msg := agentsdk.NewFileMessage("file:///path/to/image.png")
+
+// Explicit media type
+msg = agentsdk.NewFileMessage("https://example.com/doc.pdf", agentsdk.MediaPDF)
+
+// Text + files together
+msg = agentsdk.NewUserMessageWithFiles("Describe this image",
+    agentsdk.FileContent{URI: "file:///tmp/photo.jpg", MediaType: agentsdk.MediaJPEG},
+)
+```
+
+### MediaType constants
+
+```go
+agentsdk.MediaJPEG  // "image/jpeg"
+agentsdk.MediaPNG   // "image/png"
+agentsdk.MediaGIF   // "image/gif"
+agentsdk.MediaWebP  // "image/webp"
+agentsdk.MediaPDF   // "application/pdf"
+agentsdk.MediaCSV   // "text/csv"
+agentsdk.MediaMP3   // "audio/mpeg"
+agentsdk.MediaWAV   // "audio/wav"
+agentsdk.MediaMP4   // "video/mp4"
+agentsdk.MediaDOCX  // application/vnd.openxmlformats-officedocument.wordprocessingml.document
+agentsdk.MediaXLSX  // application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+agentsdk.MediaPPTX  // application/vnd.openxmlformats-officedocument.presentationml.presentation
+agentsdk.MediaHTML  // "text/html"
+agentsdk.MediaText  // "text/plain"
+agentsdk.MediaJSON  // "application/json"
+```
+
+### Resolver interface
+
+A `Resolver` converts a URI to raw bytes. Implement it to add support for custom URI schemes (e.g., `s3://`, `gs://`):
+
+```go
+type Resolver interface {
+    Resolve(ctx context.Context, uri string) (ResolvedFile, error)
+}
+
+// ResolverFunc adapts a plain function to Resolver.
+var myResolver core.ResolverFunc = func(ctx context.Context, uri string) (core.ResolvedFile, error) {
+    // fetch bytes, return core.ResolvedFile{Data: ..., MediaType: ...}
+}
+```
+
+### Extractor interface
+
+An `Extractor` converts raw bytes into `[]UserContent` blocks. Use this to add extraction for types your provider does not handle natively (e.g., parse a PDF into text):
+
+```go
+type Extractor interface {
+    Extract(ctx context.Context, data []byte, mediaType MediaType) ([]UserContent, error)
+}
+
+// ExtractorFunc adapts a plain function to Extractor.
+var pdfExtractor core.ExtractorFunc = func(ctx context.Context, data []byte, mt core.MediaType) ([]core.UserContent, error) {
+    text := extractTextFromPDF(data)
+    return []core.UserContent{core.TextContent{Text: text}}, nil
+}
+```
+
+### Sentinel errors
+
+| Error | When |
+|-------|------|
+| `ErrUnsupportedMediaType` | Provider does not support the media type and no extractor is registered |
+| `ErrResolverNotFound` | No resolver is registered for the URI scheme |
+
+## Embeddings
+
+Generate vector embeddings using the `Embedder` interface. The API is batch-first — pass multiple texts in a single call:
+
+```go
+type Embedder interface {
+    Embed(ctx context.Context, texts []string) ([][]float32, error)
+}
+```
+
+### OllamaEmbedder
+
+```go
+import "github.com/urmzd/agent-sdk/provider/ollama"
+
+client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
+embedder := ollama.NewEmbedder(client)
+
+vecs, err := embedder.Embed(ctx, []string{"hello world", "goodbye world"})
+// vecs[0] is the embedding for "hello world"
+// vecs[1] is the embedding for "goodbye world"
+```
+
+The embed model is the third argument to `ollama.NewClient`. `OllamaEmbedder` calls the Ollama embedding endpoint once per text and returns results in input order.
+
 ## Provider Resilience
 
 ### Retry
@@ -163,40 +281,45 @@ type NamedProvider interface {
 Wrap any provider with exponential backoff retry for transient errors (429, 5xx, timeouts):
 
 ```go
-retryCfg := agentsdk.RetryConfig{
+import "github.com/urmzd/agent-sdk/provider/retry"
+
+retryCfg := retry.Config{
     MaxAttempts: 3,
     BaseDelay:   500 * time.Millisecond,
     MaxDelay:    10 * time.Second,
     Multiplier:  2.0,
 }
-provider := agentsdk.NewRetryProvider(adapter, retryCfg)
+provider := retry.New(adapter, retryCfg)
 ```
 
-By default, only transient errors are retried. Override `ShouldRetry` to customize.
+By default, only transient errors are retried. Set `ShouldRetry` on the config to customize.
 
 ### Fallback
 
 Try multiple providers in order — if one fails, fall back to the next:
 
 ```go
+import "github.com/urmzd/agent-sdk/provider/fallback"
+import "github.com/urmzd/agent-sdk/provider/ollama"
+
 primary := ollama.NewAdapter(ollama.NewClient("http://primary:11434", "llama3", ""))
 backup  := ollama.NewAdapter(ollama.NewClient("http://backup:11434", "llama3", ""))
 
-provider := agentsdk.NewFallbackProvider(primary, backup)
+provider := fallback.New(primary, backup)
 ```
 
-By default, falls back on any error. Set `FallbackOn` to control which errors trigger fallback (e.g., `IsTransient` for transient-only).
+By default, falls back on any error. Set `FallbackOn` on the returned `*fallback.Provider` to control which errors trigger fallback (e.g., `core.IsTransient` for transient-only).
 
 ### Composition
 
 Retry and fallback compose naturally:
 
 ```go
-retryCfg := agentsdk.DefaultRetryConfig()
+retryCfg := retry.DefaultConfig()
 
-provider := agentsdk.NewFallbackProvider(
-    agentsdk.NewRetryProvider(primary, retryCfg),
-    agentsdk.NewRetryProvider(backup, retryCfg),
+provider := fallback.New(
+    retry.New(primary, retryCfg),
+    retry.New(backup, retryCfg),
 )
 
 agent := agentsdk.NewAgent(agentsdk.AgentConfig{
@@ -345,13 +468,14 @@ When the LLM requests multiple tool calls in a single response, all tools execut
 3. Check iteration cap
 4. Strip `ConfigContent` from messages
 5. Compact if configured or `CompactNow` is set
-6. Send messages + tool definitions to the provider via `ChatStream`
-7. Aggregate streaming deltas into a complete `AssistantMessage`, forward to caller
-8. Capture `UsageDelta` from the provider, enrich with wall-clock latency, forward to caller
-9. Persist the assistant message to the tree
-10. If the message contains `ToolUseContent`, execute all tool calls **in parallel**
-11. Collect results into a single `SystemMessage` with `ToolResultContent` blocks and persist
-12. Repeat until the assistant responds with text only (no tool calls) or max iterations reached
+6. Resolve `FileContent` URIs and negotiate with provider via `PrepareMessages` — native types pass through, others go through extractors
+7. Send messages + tool definitions to the provider via `ChatStream`
+8. Aggregate streaming deltas into a complete `AssistantMessage`, forward to caller
+9. Capture `UsageDelta` from the provider, enrich with wall-clock latency, forward to caller
+10. Persist the assistant message to the tree
+11. If the message contains `ToolUseContent`, execute all tool calls **in parallel**
+12. Collect results into a single `SystemMessage` with `ToolResultContent` blocks and persist
+13. Repeat until the assistant responds with text only (no tool calls) or max iterations reached
 
 All deltas are forwarded to the caller's `EventStream` in real-time.
 
@@ -421,32 +545,47 @@ Optional persistence via `WAL` (write-ahead log) and `Store` interfaces.
 client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
 adapter := ollama.NewAdapter(client)
 
-// adapter implements agentsdk.Provider and agentsdk.NamedProvider
+// adapter implements core.Provider, core.NamedProvider, and core.ContentNegotiator
 // Emits UsageDelta with token counts from Ollama's response
 // Returns structured ProviderError with transient/permanent classification
 // Also exposes: Generate, GenerateWithModel, GenerateStream, Embed, ExtractEntities
 ```
+
+The adapter implements `ContentNegotiator` and declares native support for JPEG and PNG. When a `UserMessage` contains `FileContent` blocks with those types, the adapter base64-encodes the raw bytes into Ollama's `images` field automatically.
+
+For embeddings, use `ollama.NewEmbedder(client)` — see the [Embeddings](#embeddings) section.
 
 ## Architecture
 
 | File | Purpose |
 |------|---------|
 | `agent.go` | Agent loop, config resolution, parallel tool dispatch, sub-agent registration |
-| `message.go` | Sealed `Message` interface (system, user, assistant) |
-| `content.go` | Content blocks (`TextContent`, `ToolUseContent`, `ToolResultContent`, `ConfigContent`) |
-| `delta.go` | Sealed `Delta` interface (LLM-side + execution-side + metadata + terminal) |
-| `stream.go` | `EventStream`, `Replay` |
-| `provider.go` | `Provider` and `NamedProvider` interfaces |
-| `provider_fallback.go` | `FallbackProvider` — multi-provider failover |
-| `provider_retry.go` | `RetryProvider` — exponential backoff retry |
-| `errors.go` | Structured errors (`ProviderError`, `FallbackError`, `RetryError`), classification |
-| `tool.go` | `Tool`, `ToolDef`, `ToolFunc`, `ToolRegistry`, `subAgentTool` |
 | `aggregator.go` | `DefaultAggregator` — reconstruct messages from deltas |
-| `compactor.go` | Compaction strategies + `CompactConfig` data-driven config |
+| `stream.go` | `EventStream`, `Replay` |
 | `subagent.go` | `SubAgentDef`, `SubAgentInvoker` |
-| `node.go` | `Node`, `TreePath`, `BranchID`, `NodeID` |
-| `tree.go` | Branching conversation tree |
-| `flatten.go` | `FlattenBranch`, `FlattenAnnotated` |
-| `store.go` | `Store` persistence interface |
-| `tx.go` | `WAL` write-ahead log interface |
-| `ollama/` | Ollama client + adapter |
+| `core/message.go` | Sealed `Message` interface + convenience constructors (`NewFileMessage`, `NewUserMessageWithFiles`) |
+| `core/content.go` | Content blocks: `TextContent`, `ToolUseContent`, `ToolResultContent`, `ConfigContent`, `FileContent`; `MediaType` constants |
+| `core/delta.go` | Sealed `Delta` interface (LLM-side + execution-side + metadata + terminal) |
+| `core/provider.go` | `Provider` and `NamedProvider` interfaces |
+| `core/embedder.go` | `Embedder` interface — batch vector embedding |
+| `core/resolver.go` | `Resolver` interface + `ResolverFunc` adapter + `ResolvedFile` struct |
+| `core/extractor.go` | `Extractor` interface + `ExtractorFunc` adapter |
+| `core/negotiate.go` | `ContentNegotiator` optional provider interface + `ContentSupport` struct |
+| `core/errors.go` | Structured errors (`ProviderError`, `FallbackError`, `RetryError`), sentinels, classification |
+| `core/tool.go` | `Tool`, `ToolDef`, `ToolFunc`, `ToolRegistry` |
+| `core/compactor.go` | Compaction strategies + `CompactConfig` data-driven config |
+| `core/node.go` | `Node`, `TreePath`, `BranchID`, `NodeID` |
+| `core/store.go` | `Store` persistence interface |
+| `core/wal.go` | `WAL` write-ahead log interface |
+| `tree/tree.go` | Branching conversation tree |
+| `tree/flatten.go` | `FlattenBranch`, `FlattenAnnotated` |
+| `tree/compact.go` | Tree-level compaction |
+| `tree/diff.go` | Branch diff |
+| `store/memwal/` | In-memory WAL implementation |
+| `provider/content.go` | `ResolverRegistry`, `ExtractorRegistry`, `PrepareMessages` — URI resolution, content negotiation, built-in file/http resolvers |
+| `provider/ollama/adapter.go` | Ollama provider adapter (implements `Provider`, `NamedProvider`, `ContentNegotiator`) |
+| `provider/ollama/client.go` | Ollama HTTP client |
+| `provider/ollama/embed.go` | `OllamaEmbedder` — implements `core.Embedder` |
+| `provider/ollama/types.go` | Ollama wire types |
+| `provider/retry/` | `RetryProvider` — exponential backoff retry |
+| `provider/fallback/` | `FallbackProvider` — multi-provider failover |

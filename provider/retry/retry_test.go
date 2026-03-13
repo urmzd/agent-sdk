@@ -1,4 +1,4 @@
-package agentsdk
+package retry
 
 import (
 	"context"
@@ -6,11 +6,36 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/urmzd/agent-sdk/core"
 )
+
+// mockProvider returns a fixed text response.
+type mockProvider struct {
+	response string
+}
+
+func (m *mockProvider) ChatStream(_ context.Context, _ []core.Message, _ []core.ToolDef) (<-chan core.Delta, error) {
+	ch := make(chan core.Delta, 3)
+	ch <- core.TextStartDelta{}
+	ch <- core.TextContentDelta{Content: m.response}
+	ch <- core.TextEndDelta{}
+	close(ch)
+	return ch, nil
+}
+
+// errorProviderSimple returns a fixed error.
+type errorProviderSimple struct {
+	err error
+}
+
+func (p *errorProviderSimple) ChatStream(_ context.Context, _ []core.Message, _ []core.ToolDef) (<-chan core.Delta, error) {
+	return nil, p.err
+}
 
 func TestRetryProvider_SucceedsFirstTry(t *testing.T) {
 	inner := &mockProvider{response: "ok"}
-	rp := NewRetryProvider(inner, DefaultRetryConfig())
+	rp := New(inner, DefaultConfig())
 
 	ch, err := rp.ChatStream(context.Background(), nil, nil)
 	if err != nil {
@@ -19,7 +44,7 @@ func TestRetryProvider_SucceedsFirstTry(t *testing.T) {
 
 	var text string
 	for d := range ch {
-		if tc, ok := d.(TextContentDelta); ok {
+		if tc, ok := d.(core.TextContentDelta); ok {
 			text += tc.Content
 		}
 	}
@@ -33,21 +58,21 @@ func TestRetryProvider_RetriesOnTransient(t *testing.T) {
 	inner := &countingProvider{
 		calls:     &calls,
 		failUntil: 2,
-		err: &ProviderError{
+		err: &core.ProviderError{
 			Provider: "flaky",
-			Kind:     ErrorKindTransient,
+			Kind:     core.ErrorKindTransient,
 			Err:      errors.New("timeout"),
 		},
 		response: "recovered",
 	}
 
-	cfg := RetryConfig{
+	cfg := Config{
 		MaxAttempts: 3,
 		BaseDelay:   1 * time.Millisecond, // fast for tests
 		MaxDelay:    5 * time.Millisecond,
 		Multiplier:  2.0,
 	}
-	rp := NewRetryProvider(inner, cfg)
+	rp := New(inner, cfg)
 
 	ch, err := rp.ChatStream(context.Background(), nil, nil)
 	if err != nil {
@@ -56,7 +81,7 @@ func TestRetryProvider_RetriesOnTransient(t *testing.T) {
 
 	var text string
 	for d := range ch {
-		if tc, ok := d.(TextContentDelta); ok {
+		if tc, ok := d.(core.TextContentDelta); ok {
 			text += tc.Content
 		}
 	}
@@ -69,73 +94,73 @@ func TestRetryProvider_RetriesOnTransient(t *testing.T) {
 }
 
 func TestRetryProvider_StopsOnPermanent(t *testing.T) {
-	inner := &errorProviderSimple{err: &ProviderError{
+	inner := &errorProviderSimple{err: &core.ProviderError{
 		Provider: "auth",
-		Kind:     ErrorKindPermanent,
+		Kind:     core.ErrorKindPermanent,
 		Err:      errors.New("unauthorized"),
 	}}
 
-	cfg := RetryConfig{
+	cfg := Config{
 		MaxAttempts: 5,
 		BaseDelay:   1 * time.Millisecond,
 	}
-	rp := NewRetryProvider(inner, cfg)
+	rp := New(inner, cfg)
 
 	_, err := rp.ChatStream(context.Background(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	// Should not have retried — permanent error
-	var pe *ProviderError
+	// Should not have retried -- permanent error
+	var pe *core.ProviderError
 	if !errors.As(err, &pe) {
 		t.Fatalf("expected *ProviderError, got %T", err)
 	}
 }
 
 func TestRetryProvider_ExhaustsAttempts(t *testing.T) {
-	inner := &errorProviderSimple{err: &ProviderError{
+	inner := &errorProviderSimple{err: &core.ProviderError{
 		Provider: "down",
-		Kind:     ErrorKindTransient,
+		Kind:     core.ErrorKindTransient,
 		Err:      errors.New("server error"),
 	}}
 
-	cfg := RetryConfig{
+	cfg := Config{
 		MaxAttempts: 2,
 		BaseDelay:   1 * time.Millisecond,
 	}
-	rp := NewRetryProvider(inner, cfg)
+	rp := New(inner, cfg)
 
 	_, err := rp.ChatStream(context.Background(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 
-	var re *RetryError
+	var re *core.RetryError
 	if !errors.As(err, &re) {
 		t.Fatalf("expected *RetryError, got %T", err)
 	}
 	if re.Attempts != 2 {
 		t.Errorf("attempts = %d, want 2", re.Attempts)
 	}
-	if !errors.Is(re.Last, ErrProviderFailed) {
+	if !errors.Is(re.Last, core.ErrProviderFailed) {
 		t.Error("last error should match ErrProviderFailed")
 	}
 }
 
 func TestRetryProvider_ContextCancelledDuringBackoff(t *testing.T) {
-	inner := &errorProviderSimple{err: &ProviderError{
+	inner := &errorProviderSimple{err: &core.ProviderError{
 		Provider: "slow",
-		Kind:     ErrorKindTransient,
+		Kind:     core.ErrorKindTransient,
 		Err:      errors.New("timeout"),
 	}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	cfg := RetryConfig{
+	cfg := Config{
 		MaxAttempts: 10,
 		BaseDelay:   1 * time.Second, // long delay
 	}
-	rp := NewRetryProvider(inner, cfg)
+	rp := New(inner, cfg)
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -153,14 +178,14 @@ func TestRetryProvider_ContextCancelledDuringBackoff(t *testing.T) {
 
 func TestRetryProvider_Name(t *testing.T) {
 	inner := &mockProvider{response: "ok"}
-	rp := NewRetryProvider(inner, DefaultRetryConfig())
+	rp := New(inner, DefaultConfig())
 	if rp.Name() != "retry(unknown)" {
 		t.Errorf("Name() = %q, want %q", rp.Name(), "retry(unknown)")
 	}
 }
 
 func TestRetryProvider_DefaultConfig(t *testing.T) {
-	cfg := DefaultRetryConfig()
+	cfg := DefaultConfig()
 	if cfg.MaxAttempts != 3 {
 		t.Errorf("MaxAttempts = %d, want 3", cfg.MaxAttempts)
 	}
@@ -177,15 +202,15 @@ type countingProvider struct {
 	response  string
 }
 
-func (p *countingProvider) ChatStream(_ context.Context, _ []Message, _ []ToolDef) (<-chan Delta, error) {
+func (p *countingProvider) ChatStream(_ context.Context, _ []core.Message, _ []core.ToolDef) (<-chan core.Delta, error) {
 	n := p.calls.Add(1)
 	if n <= p.failUntil {
 		return nil, p.err
 	}
-	ch := make(chan Delta, 3)
-	ch <- TextStartDelta{}
-	ch <- TextContentDelta{Content: p.response}
-	ch <- TextEndDelta{}
+	ch := make(chan core.Delta, 3)
+	ch <- core.TextStartDelta{}
+	ch <- core.TextContentDelta{Content: p.response}
+	ch <- core.TextEndDelta{}
 	close(ch)
 	return ch, nil
 }

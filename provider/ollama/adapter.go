@@ -2,15 +2,16 @@ package ollama
 
 import (
 	"context"
+	"encoding/base64"
 	"strings"
 
-	agentsdk "github.com/urmzd/agent-sdk"
+	"github.com/urmzd/agent-sdk/core"
 )
 
-// Name implements agentsdk.NamedProvider.
+// Name implements core.NamedProvider.
 func (a *Adapter) Name() string { return "ollama" }
 
-// Adapter wraps the Ollama Client and implements agentsdk.Provider.
+// Adapter wraps the Ollama Client and implements core.Provider.
 type Adapter struct {
 	Client *Client
 }
@@ -20,14 +21,14 @@ func NewAdapter(client *Client) *Adapter {
 	return &Adapter{Client: client}
 }
 
-// ChatStream implements agentsdk.Provider.
-func (a *Adapter) ChatStream(ctx context.Context, messages []agentsdk.Message, tools []agentsdk.ToolDef) (<-chan agentsdk.Delta, error) {
+// ChatStream implements core.Provider.
+func (a *Adapter) ChatStream(ctx context.Context, messages []core.Message, tools []core.ToolDef) (<-chan core.Delta, error) {
 	oMsgs := toOllamaMessages(messages)
 	oTools := toOllamaTools(tools)
 
 	rx, err := a.Client.ChatStream(ctx, oMsgs, oTools)
 	if err != nil {
-		return nil, &agentsdk.ProviderError{
+		return nil, &core.ProviderError{
 			Provider: "ollama",
 			Model:    a.Client.Model,
 			Kind:     classifyOllamaError(err),
@@ -35,7 +36,7 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []agentsdk.Message, t
 		}
 	}
 
-	out := make(chan agentsdk.Delta, 64)
+	out := make(chan core.Delta, 64)
 	go func() {
 		defer close(out)
 
@@ -43,11 +44,11 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []agentsdk.Message, t
 		for chunk := range rx {
 			if chunk.Done {
 				if textStarted {
-					out <- agentsdk.TextEndDelta{}
+					out <- core.TextEndDelta{}
 					textStarted = false
 				}
 				// Emit usage delta from the final chunk.
-				out <- agentsdk.UsageDelta{
+				out <- core.UsageDelta{
 					PromptTokens:     chunk.PromptEvalCount,
 					CompletionTokens: chunk.EvalCount,
 					TotalTokens:      chunk.PromptEvalCount + chunk.EvalCount,
@@ -58,32 +59,43 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []agentsdk.Message, t
 			// Handle text content
 			if chunk.Message.Content != "" {
 				if !textStarted {
-					out <- agentsdk.TextStartDelta{}
+					out <- core.TextStartDelta{}
 					textStarted = true
 				}
-				out <- agentsdk.TextContentDelta{Content: chunk.Message.Content}
+				out <- core.TextContentDelta{Content: chunk.Message.Content}
 			}
 
 			// Handle tool calls
 			if len(chunk.Message.ToolCalls) > 0 {
 				if textStarted {
-					out <- agentsdk.TextEndDelta{}
+					out <- core.TextEndDelta{}
 					textStarted = false
 				}
 				for _, tc := range chunk.Message.ToolCalls {
-					id := agentsdk.NewID()
-					out <- agentsdk.ToolCallStartDelta{ID: id, Name: tc.Function.Name}
-					out <- agentsdk.ToolCallEndDelta{Arguments: tc.Function.Arguments}
+					id := core.NewID()
+					out <- core.ToolCallStartDelta{ID: id, Name: tc.Function.Name}
+					out <- core.ToolCallEndDelta{Arguments: tc.Function.Arguments}
 				}
 			}
 		}
 
 		if textStarted {
-			out <- agentsdk.TextEndDelta{}
+			out <- core.TextEndDelta{}
 		}
 	}()
 
 	return out, nil
+}
+
+// ContentSupport implements core.ContentNegotiator.
+// Ollama supports JPEG and PNG natively via the images field.
+func (a *Adapter) ContentSupport() core.ContentSupport {
+	return core.ContentSupport{
+		NativeTypes: map[core.MediaType]bool{
+			core.MediaJPEG: true,
+			core.MediaPNG:  true,
+		},
+	}
 }
 
 // ── Convenience methods (not part of Provider) ──────────────────────
@@ -115,19 +127,19 @@ func (a *Adapter) ExtractEntities(ctx context.Context, text string) ([]Extracted
 
 // ── Conversion helpers ──────────────────────────────────────────────
 
-func toOllamaMessages(msgs []agentsdk.Message) []ChatMessage {
+func toOllamaMessages(msgs []core.Message) []ChatMessage {
 	out := make([]ChatMessage, 0, len(msgs))
 	for _, m := range msgs {
 		switch v := m.(type) {
-		case agentsdk.SystemMessage:
+		case core.SystemMessage:
 			// Split: text goes to system role, tool results go to tool role.
 			var textParts []string
-			var toolResults []agentsdk.ToolResultContent
+			var toolResults []core.ToolResultContent
 			for _, c := range v.Content {
 				switch bc := c.(type) {
-				case agentsdk.TextContent:
+				case core.TextContent:
 					textParts = append(textParts, bc.Text)
-				case agentsdk.ToolResultContent:
+				case core.ToolResultContent:
 					toolResults = append(toolResults, bc)
 				}
 			}
@@ -137,31 +149,40 @@ func toOllamaMessages(msgs []agentsdk.Message) []ChatMessage {
 			for _, tr := range toolResults {
 				out = append(out, ChatMessage{Role: "tool", Content: tr.Text})
 			}
-		case agentsdk.UserMessage:
+		case core.UserMessage:
 			// Split: text goes to user role, tool results go to tool role.
 			var textParts []string
-			var toolResults []agentsdk.ToolResultContent
+			var images []string
+			var toolResults []core.ToolResultContent
 			for _, c := range v.Content {
 				switch bc := c.(type) {
-				case agentsdk.TextContent:
+				case core.TextContent:
 					textParts = append(textParts, bc.Text)
-				case agentsdk.ToolResultContent:
+				case core.ToolResultContent:
 					toolResults = append(toolResults, bc)
+				case core.FileContent:
+					if bc.Data != nil {
+						images = append(images, base64.StdEncoding.EncodeToString(bc.Data))
+					}
 				}
 			}
-			if len(textParts) > 0 {
-				out = append(out, ChatMessage{Role: "user", Content: strings.Join(textParts, "")})
+			if len(textParts) > 0 || len(images) > 0 {
+				out = append(out, ChatMessage{
+					Role:    "user",
+					Content: strings.Join(textParts, ""),
+					Images:  images,
+				})
 			}
 			for _, tr := range toolResults {
 				out = append(out, ChatMessage{Role: "tool", Content: tr.Text})
 			}
-		case agentsdk.AssistantMessage:
+		case core.AssistantMessage:
 			msg := ChatMessage{Role: "assistant"}
 			for _, c := range v.Content {
 				switch bc := c.(type) {
-				case agentsdk.TextContent:
+				case core.TextContent:
 					msg.Content += bc.Text
-				case agentsdk.ToolUseContent:
+				case core.ToolUseContent:
 					msg.ToolCalls = append(msg.ToolCalls, ToolCall{
 						Function: ToolCallFunction{
 							Name:      bc.Name,
@@ -176,7 +197,7 @@ func toOllamaMessages(msgs []agentsdk.Message) []ChatMessage {
 	return out
 }
 
-func toOllamaTools(defs []agentsdk.ToolDef) []Tool {
+func toOllamaTools(defs []core.ToolDef) []Tool {
 	out := make([]Tool, len(defs))
 	for i, d := range defs {
 		props := make(map[string]ToolProperty, len(d.Parameters.Properties))
@@ -200,13 +221,13 @@ func toOllamaTools(defs []agentsdk.ToolDef) []Tool {
 }
 
 // classifyOllamaError inspects the error to determine if it's transient.
-func classifyOllamaError(err error) agentsdk.ErrorKind {
+func classifyOllamaError(err error) core.ErrorKind {
 	s := err.Error()
 	if strings.Contains(s, "connection refused") ||
 		strings.Contains(s, "timeout") ||
 		strings.Contains(s, "returned 5") ||
 		strings.Contains(s, "returned 429") {
-		return agentsdk.ErrorKindTransient
+		return core.ErrorKindTransient
 	}
-	return agentsdk.ErrorKindPermanent
+	return core.ErrorKindPermanent
 }

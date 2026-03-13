@@ -24,7 +24,6 @@ agent := agentsdk.NewAgent(agentsdk.AgentConfig{
     SystemPrompt: "You are a helpful assistant.",
     Provider:     adapter,
     Tools:        agentsdk.NewToolRegistry(),
-    Compactor:    agentsdk.NoopCompactor{},
     MaxIter:      10,
 })
 
@@ -45,9 +44,28 @@ for delta := range stream.Deltas() {
 |---------|-------------|
 | **Provider** | Implement `ChatStream` to plug in any LLM backend |
 | **Tools** | Register tools via `ToolRegistry`; use `ToolFunc` for inline definitions |
-| **Compaction** | `NoopCompactor`, `SlidingWindowCompactor`, or `SummarizeCompactor` |
+| **Compaction** | Configure via `CompactCfg: &core.CompactConfig{Strategy: core.CompactNone\|Sliding\|Summarize}` |
 | **Sub-agents** | Delegate tasks to child agents with their own providers and tools |
 | **SSE Bridge** | `WriteSSE(w, flusher, stream)` to stream deltas over HTTP |
+| **File Upload** | Attach files via `core.NewFileMessage(uri)` or `core.NewUserMessageWithFiles(text, files...)`; URIs are resolved by `Resolvers` and extracted by `Extractors` in `AgentConfig` |
+| **Embeddings** | `core.Embedder` interface; `ollama.NewEmbedder(client)` for Ollama-backed vector embeddings |
+
+## Sending Files
+
+```go
+import "github.com/urmzd/agent-sdk/core"
+
+// Single file from a URI — media type inferred from extension.
+msg := core.NewFileMessage("file:///path/to/image.png")
+
+// Text prompt combined with one or more file attachments.
+msg = core.NewUserMessageWithFiles("Describe these images.",
+    core.FileContent{URI: "file:///img1.jpg", MediaType: core.MediaJPEG},
+    core.FileContent{URI: "https://example.com/chart.png"},
+)
+
+stream := agent.Invoke(ctx, []core.Message{msg})
+```
 
 ## Adding a Tool
 

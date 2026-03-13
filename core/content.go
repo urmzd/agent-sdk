@@ -1,4 +1,4 @@
-package agentsdk
+package core
 
 // ── Content role interfaces (sealed) ────────────────────────────────
 
@@ -10,6 +10,29 @@ type UserContent interface{ isUserContent() }
 
 // AssistantContent is content allowed in an AssistantMessage.
 type AssistantContent interface{ isAssistantContent() }
+
+// ── Media types ─────────────────────────────────────────────────────
+
+// MediaType represents a MIME type for file content.
+type MediaType string
+
+const (
+	MediaJPEG MediaType = "image/jpeg"
+	MediaPNG  MediaType = "image/png"
+	MediaGIF  MediaType = "image/gif"
+	MediaWebP MediaType = "image/webp"
+	MediaPDF  MediaType = "application/pdf"
+	MediaCSV  MediaType = "text/csv"
+	MediaMP3  MediaType = "audio/mpeg"
+	MediaWAV  MediaType = "audio/wav"
+	MediaMP4  MediaType = "video/mp4"
+	MediaDOCX MediaType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	MediaXLSX MediaType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	MediaPPTX MediaType = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	MediaHTML MediaType = "text/html"
+	MediaText MediaType = "text/plain"
+	MediaJSON MediaType = "application/json"
+)
 
 // ── Concrete content blocks ─────────────────────────────────────────
 
@@ -53,3 +76,15 @@ type ConfigContent struct {
 
 func (ConfigContent) isSystemContent() {}
 func (ConfigContent) isUserContent()   {}
+
+// FileContent represents a file attachment. Only valid in UserMessages —
+// users attach files, the system/assistant do not.
+// Data is tagged json:"-" so tree serialization stores only the URI, not raw bytes.
+type FileContent struct {
+	URI       string    `json:"uri"`                  // source location (file://, https://, s3://, gs://)
+	MediaType MediaType `json:"media_type,omitempty"` // MIME type (inferred from URI or set explicitly)
+	Data      []byte    `json:"-"`                    // raw bytes (populated after URI resolution)
+	Filename  string    `json:"filename,omitempty"`   // optional display name
+}
+
+func (FileContent) isUserContent() {}

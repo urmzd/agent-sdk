@@ -1,4 +1,4 @@
-package agentsdk
+package core
 
 import (
 	"errors"
@@ -6,13 +6,15 @@ import (
 	"net/http"
 )
 
-// ── Sentinel errors (kept for backward compatibility) ────────────────
+// ── Sentinel errors ──────────────────────────────────────────────────
 
 var (
-	ErrToolNotFound    = errors.New("tool not found")
-	ErrMaxIterations   = errors.New("max iterations reached")
-	ErrStreamCanceled = errors.New("stream canceled")
-	ErrProviderFailed  = errors.New("provider failed")
+	ErrToolNotFound         = errors.New("tool not found")
+	ErrMaxIterations        = errors.New("max iterations reached")
+	ErrStreamCanceled       = errors.New("stream canceled")
+	ErrProviderFailed       = errors.New("provider failed")
+	ErrUnsupportedMediaType = errors.New("unsupported media type")
+	ErrResolverNotFound     = errors.New("no resolver for URI scheme")
 )
 
 // ── Error classification ─────────────────────────────────────────────

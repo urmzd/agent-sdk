@@ -1,4 +1,4 @@
-package agentsdk
+package core
 
 import "time"
 

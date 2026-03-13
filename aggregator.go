@@ -1,17 +1,21 @@
 package agentsdk
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/urmzd/agent-sdk/core"
+)
 
 // StreamAggregator accumulates deltas into a complete Message.
 type StreamAggregator interface {
-	Push(delta Delta)
-	Message() Message
+	Push(delta core.Delta)
+	Message() core.Message
 	Reset()
 }
 
 // DefaultAggregator builds an AssistantMessage from streaming deltas.
 type DefaultAggregator struct {
-	contentBlocks []AssistantContent
+	contentBlocks []core.AssistantContent
 	textBuf       strings.Builder
 	inText        bool
 	toolID        string
@@ -25,32 +29,32 @@ func NewDefaultAggregator() *DefaultAggregator {
 	return &DefaultAggregator{}
 }
 
-func (a *DefaultAggregator) Push(d Delta) {
+func (a *DefaultAggregator) Push(d core.Delta) {
 	switch v := d.(type) {
-	case TextStartDelta:
+	case core.TextStartDelta:
 		a.inText = true
 		a.textBuf.Reset()
-	case TextContentDelta:
+	case core.TextContentDelta:
 		if a.inText {
 			a.textBuf.WriteString(v.Content)
 		}
-	case TextEndDelta:
+	case core.TextEndDelta:
 		if a.inText {
-			a.contentBlocks = append(a.contentBlocks, TextContent{Text: a.textBuf.String()})
+			a.contentBlocks = append(a.contentBlocks, core.TextContent{Text: a.textBuf.String()})
 			a.inText = false
 		}
-	case ToolCallStartDelta:
+	case core.ToolCallStartDelta:
 		a.inTool = true
 		a.toolID = v.ID
 		a.toolName = v.Name
 		a.argsBuf.Reset()
-	case ToolCallArgumentDelta:
+	case core.ToolCallArgumentDelta:
 		if a.inTool {
 			a.argsBuf.WriteString(v.Content)
 		}
-	case ToolCallEndDelta:
+	case core.ToolCallEndDelta:
 		if a.inTool {
-			a.contentBlocks = append(a.contentBlocks, ToolUseContent{
+			a.contentBlocks = append(a.contentBlocks, core.ToolUseContent{
 				ID:        a.toolID,
 				Name:      a.toolName,
 				Arguments: v.Arguments,
@@ -60,19 +64,19 @@ func (a *DefaultAggregator) Push(d Delta) {
 	}
 }
 
-func (a *DefaultAggregator) Message() Message {
+func (a *DefaultAggregator) Message() core.Message {
 	// Finalize any in-progress text
-	blocks := make([]AssistantContent, len(a.contentBlocks))
+	blocks := make([]core.AssistantContent, len(a.contentBlocks))
 	copy(blocks, a.contentBlocks)
 
 	if a.inText && a.textBuf.Len() > 0 {
-		blocks = append(blocks, TextContent{Text: a.textBuf.String()})
+		blocks = append(blocks, core.TextContent{Text: a.textBuf.String()})
 	}
 
 	if len(blocks) == 0 {
 		return nil
 	}
-	return AssistantMessage{Content: blocks}
+	return core.AssistantMessage{Content: blocks}
 }
 
 func (a *DefaultAggregator) Reset() {
