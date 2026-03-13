@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0 (2026-03-13)
+
+### Features
+
+- add file upload, content negotiation, and embeddings ([e9e0410](https://github.com/urmzd/agent-sdk/commit/e9e0410e77fd4af1d1a31574ba498114c7c08933))
+
+### Refactoring
+
+- follow Go conventions across codebase ([ca024da](https://github.com/urmzd/agent-sdk/commit/ca024da0f03103cb546e3d941d6d8b3edbbcb0a3))
+- **provider**: remove model param from ChatStream ([98d1737](https://github.com/urmzd/agent-sdk/commit/98d17374c105167bfb05715f20f75d9485844558))
+
+
 ## Unreleased
 
 ### Features
