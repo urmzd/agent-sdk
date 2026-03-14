@@ -2,136 +2,163 @@
 
 ## Identity
 
-You are an agent working on **agent-sdk** — a strongly-typed Go SDK for building streaming LLM agent loops. It provides typed deltas (LLM-side, execution-side, and metadata), sealed message types (three roles: system, user, assistant), parallel tool execution, sub-agent delegation with delta streaming, a branching conversation tree, runtime configuration via the tree, provider resilience (retry + fallback), structured errors, session replay, file upload with URI-based content resolution and provider content negotiation, and vector embeddings.
+You are an agent working on **agent-sdk** — a strongly-typed Go SDK for building streaming LLM agent loops. The SDK provides typed deltas (LLM-side, execution-side, metadata), sealed message types (system, user, assistant), parallel tool execution, sub-agent delegation with delta streaming, a branching conversation tree, runtime configuration via the tree, provider resilience (retry + fallback), structured errors, session replay, file upload with content negotiation, and vector embeddings.
 
 ## Architecture
 
-Go module with minimal dependencies (only `github.com/google/uuid`).
+Go module: `github.com/urmzd/agent-sdk`. Minimal dependencies (only `github.com/google/uuid`). Go 1.25+.
+
+### Root Package (`agentsdk`)
 
 | File | Role |
 |------|------|
 | `agent.go` | Agent loop (`NewAgent`, `Invoke`, `runLoop`), config resolution (`resolveConfig`, `stripConfig`), parallel tool dispatch, sub-agent registration |
-| `aggregator.go` | `DefaultAggregator` — reconstruct messages from deltas |
-| `stream.go` | `EventStream`, `Replay` for session restoration |
-| `subagent.go` | `SubAgentDef`, `SubAgentInvoker` interface |
-| `core/message.go` | Sealed `Message` interface (system, user, assistant — no tool role) |
-| `core/content.go` | Content blocks (`TextContent`, `ToolUseContent`, `ToolResultContent`, `ConfigContent`, `FileContent`); `MediaType` string type with MIME constants |
-| `core/delta.go` | Sealed `Delta` interface (LLM-side + execution-side + metadata + terminal) |
-| `core/provider.go` | `Provider` interface (`ChatStream`), `NamedProvider` |
-| `core/errors.go` | Structured errors (`ProviderError`, `FallbackError`, `RetryError`), `ErrorKind`, `IsTransient`, `ClassifyHTTPStatus`; sentinels `ErrUnsupportedMediaType`, `ErrResolverNotFound` |
-| `core/tool.go` | `Tool`, `ToolDef`, `ToolFunc`, `ToolRegistry`, `subAgentTool` |
-| `core/compactor.go` | Context compaction strategies (noop, sliding window, summarize) + `CompactConfig` data-driven config |
-| `core/embedder.go` | `Embedder` interface — batch text-to-vector embeddings |
-| `core/resolver.go` | `Resolver` interface + `ResolverFunc` adapter — resolve a URI to raw bytes (`ResolvedFile`) |
-| `core/extractor.go` | `Extractor` interface + `ExtractorFunc` adapter — convert raw bytes to `[]UserContent` |
-| `core/negotiate.go` | `ContentNegotiator` optional provider interface + `ContentSupport` — declare natively supported media types |
-| `core/node.go` | `Node`, `TreePath`, `BranchID`, `NodeID` |
-| `core/store.go` | `Store` persistence interface |
-| `core/wal.go` | `WAL` write-ahead log interface |
-| `tree/tree.go` | Branching conversation tree with checkpoints, rewind, archive |
-| `tree/flatten.go` | `FlattenBranch`, `FlattenAnnotated` |
-| `tree/compact.go` | Tree-level compaction helpers |
-| `provider/content.go` | `ResolverRegistry`, `ExtractorRegistry`, `PrepareMessages` — URI resolution, content negotiation, built-in file/http resolvers |
-| `provider/fallback/` | `FallbackProvider` — multi-provider failover |
-| `provider/retry/` | `RetryProvider` — exponential backoff retry |
-| `provider/ollama/adapter.go` | Ollama `Provider` adapter (implements `NamedProvider`, `ContentNegotiator`; emits `UsageDelta`; maps `FileContent` → base64 images) |
-| `provider/ollama/embed.go` | `OllamaEmbedder` — implements `core.Embedder` via Ollama embed API |
-| `provider/ollama/client.go` | Raw Ollama HTTP client |
-| `store/memwal/` | In-memory `WAL` implementation |
+| `stream.go` | `EventStream` (delta consumer), `Replay` (session restoration from stored messages) |
+| `aggregator.go` | `StreamAggregator` interface, `DefaultAggregator` — reconstruct `AssistantMessage` from streaming deltas |
+| `subagent.go` | `SubAgentDef` struct, `SubAgentInvoker` interface, `subAgentTool` (implements both `Tool` and `SubAgentInvoker`) |
 
-### Core Interfaces
+### `core/` Package (Domain Types)
 
-| Interface | Purpose |
-|-----------|---------|
-| `Provider` | `ChatStream(ctx, messages, tools) (<-chan Delta, error)` — plug in any LLM |
-| `NamedProvider` | `Provider` + `Name() string` — optional identification for logs/errors |
-| `Tool` | `Definition() ToolDef` + `Execute(ctx, args) (string, error)` |
-| `SubAgentInvoker` | `InvokeAgent(ctx, task) *EventStream` — enables delta forwarding for sub-agents |
-| `Compactor` | `Compact(ctx, messages, provider) ([]Message, error)` |
-| `Embedder` | `Embed(ctx, texts []string) ([][]float32, error)` — batch text-to-vector embeddings |
-| `Resolver` | `Resolve(ctx, uri string) (ResolvedFile, error)` — fetch raw bytes from a URI |
-| `Extractor` | `Extract(ctx, data []byte, mediaType) ([]UserContent, error)` — convert raw bytes to content blocks |
-| `ContentNegotiator` | Optional provider interface: `ContentSupport() ContentSupport` — declare natively supported media types |
+| File | Role |
+|------|------|
+| `message.go` | Sealed `Message` interface (`SystemMessage`, `UserMessage`, `AssistantMessage`). Constructors: `NewSystemMessage`, `NewUserMessage`, `NewToolResultMessage`, `NewUserToolResultMessage`, `NewFileMessage`, `NewUserMessageWithFiles` |
+| `content.go` | Sealed content-role interfaces (`SystemContent`, `UserContent`, `AssistantContent`). Concrete blocks: `TextContent`, `ToolUseContent`, `ToolResultContent`, `ConfigContent`, `FileContent`. `MediaType` constants (15 types) |
+| `delta.go` | Sealed `Delta` interface. 13 concrete types: text streaming (3), tool call streaming (3), tool execution (3), metadata (`UsageDelta`), terminal (`ErrorDelta`, `DoneDelta`) |
+| `provider.go` | `Provider` interface (`ChatStream`), `NamedProvider`, `ProviderName()` helper |
+| `tool.go` | `Tool` interface, `ToolDef`, `ToolFunc` adapter, `ToolRegistry` (Get/Register/Definitions/Execute) |
+| `errors.go` | `ProviderError`, `FallbackError`, `RetryError`. `ErrorKind` (transient/permanent). Helpers: `IsTransient()`, `ClassifyHTTPStatus()`. Sentinels: `ErrToolNotFound`, `ErrMaxIterations`, `ErrStreamCanceled`, `ErrProviderFailed`, `ErrUnsupportedMediaType`, `ErrResolverNotFound` |
+| `compactor.go` | `Compactor` interface. `CompactConfig` (data-driven: strategy + params). `CompactStrategy`: `CompactNone`, `CompactSlidingWindow`, `CompactSummarize`. Built-in: `NoopCompactor`, `SlidingWindowCompactor`, `SummarizeCompactor`. Also: `MessagesToText()` helper |
+| `embedder.go` | `Embedder` interface — `Embed(ctx, []string) ([][]float32, error)` |
+| `resolver.go` | `Resolver` interface — `Resolve(ctx, uri) (ResolvedFile, error)`. `ResolverFunc` adapter. `ResolvedFile` struct |
+| `extractor.go` | `Extractor` interface — `Extract(ctx, data, mediaType) ([]UserContent, error)`. `ExtractorFunc` adapter |
+| `negotiate.go` | `ContentNegotiator` interface — `ContentSupport()`. `ContentSupport` struct with `NativeTypes` map and `Supports()` method |
+| `node.go` | `Node`, `NodeID`, `BranchID`, `CheckpointID`, `NodeState`, `TreePath`, `Checkpoint` |
+| `store.go` | `Store`, `StoreTx` persistence interfaces |
+| `wal.go` | `WAL` interface, `TxID`, `TxOpKind`, `TxOp` |
+| `id.go` | `NewID()` — UUID generation |
+| `result.go` | Result types |
 
-### Message Model
+### `tree/` Package
+
+| File | Role |
+|------|------|
+| `tree.go` | `Tree` struct. Operations: `New`, `AddChild`, `Branch`, `UpdateUserMessage`, `SetActive`, `Active`, `Tip`, `Path`, `Children`, `Branches`, `Archive`, `Restore`, `Checkpoint`, `Rewind`, `NodePath`. Options: `WithWAL`, `WithStore` |
+| `flatten.go` | `FlattenBranch`, `FlattenAnnotated` — walk root-to-tip, skip archived nodes |
+| `compact.go` | Tree-level compaction helpers |
+| `diff.go` | Branch diff/comparison |
+| `errors.go` | `ErrNodeNotFound`, `ErrBranchNotFound`, `ErrCheckpointNotFound`, `ErrRootImmutable`, `ErrNodeArchived`, `ErrInvalidBranchPoint` |
+
+### `provider/` Packages
+
+| Package | Role |
+|---------|------|
+| `provider/retry/` | `retry.Provider` — exponential backoff. `Config` struct (MaxAttempts, BaseDelay, MaxDelay, Multiplier, ShouldRetry). `DefaultConfig()`. Implements `NamedProvider` |
+| `provider/fallback/` | `fallback.Provider` — multi-provider failover. `FallbackOn` predicate field. Implements `NamedProvider` |
+| `provider/ollama/` | `Client` (HTTP), `Adapter` (Provider + NamedProvider + ContentNegotiator), `OllamaEmbedder` (Embedder). Native JPEG/PNG via `images` field. Convenience: `Generate`, `GenerateWithModel`, `GenerateStream`, `Embed`, `ExtractEntities` |
+
+### `store/` Packages
+
+| Package | Role |
+|---------|------|
+| `store/memwal/` | In-memory WAL implementation |
+
+## Key Interfaces
+
+| Interface | Package | Method | Purpose |
+|-----------|---------|--------|---------|
+| `Provider` | `core` | `ChatStream(ctx, []Message, []ToolDef) (<-chan Delta, error)` | LLM integration |
+| `NamedProvider` | `core` | `Provider` + `Name() string` | Identification in logs/errors |
+| `ContentNegotiator` | `core` | `ContentSupport() ContentSupport` | Declare native file type support |
+| `Tool` | `core` | `Definition() ToolDef` + `Execute(ctx, args) (string, error)` | Tool execution |
+| `SubAgentInvoker` | root | `InvokeAgent(ctx, task) *EventStream` | Delta forwarding for sub-agents |
+| `StreamAggregator` | root | `Push(Delta)` + `Message() Message` + `Reset()` | Delta-to-message reconstruction |
+| `Compactor` | `core` | `Compact(ctx, []Message, Provider) ([]Message, error)` | Context window management |
+| `Embedder` | `core` | `Embed(ctx, []string) ([][]float32, error)` | Vector embeddings |
+| `Resolver` | `core` | `Resolve(ctx, uri) (ResolvedFile, error)` | URI-to-bytes resolution |
+| `Extractor` | `core` | `Extract(ctx, data, mediaType) ([]UserContent, error)` | Bytes-to-content conversion |
+| `Store` | `core` | Persistence backend for tree nodes | Durable storage |
+| `WAL` | `core` | Write-ahead log for atomic tree mutations | Crash recovery |
+
+## Message Model
 
 Three roles only. Tool results are content blocks, not a separate role:
 
-- **`SystemMessage`** — system instructions, auto-executed tool results, or config (`TextContent`, `ToolResultContent`, `ConfigContent`)
-- **`UserMessage`** — user input, human-in-the-loop tool results, config, or file attachments (`TextContent`, `ToolResultContent`, `ConfigContent`, `FileContent`)
-- **`AssistantMessage`** — model responses (`TextContent`, `ToolUseContent`)
+- **`SystemMessage`** — system instructions, auto-executed tool results, config. Content: `TextContent`, `ToolResultContent`, `ConfigContent`
+- **`UserMessage`** — user input, human-in-the-loop tool results, config, files. Content: `TextContent`, `ToolResultContent`, `ConfigContent`, `FileContent`
+- **`AssistantMessage`** — model responses. Content: `TextContent`, `ToolUseContent`
 
-### Delta Types
+## Delta Categories
 
-Separated into LLM-side (what the model generates), execution-side (what happens when tools run), and metadata:
+| Category | Types | Key Fields |
+|----------|-------|------------|
+| LLM | `TextStartDelta`, `TextContentDelta`, `TextEndDelta` | `Content` |
+| LLM | `ToolCallStartDelta`, `ToolCallArgumentDelta`, `ToolCallEndDelta` | `ID`, `Name`, `Content`, `Arguments` |
+| Execution | `ToolExecStartDelta`, `ToolExecDelta`, `ToolExecEndDelta` | `ToolCallID`, `Name`, `Inner`, `Result`, `Error` |
+| Metadata | `UsageDelta` | `PromptTokens`, `CompletionTokens`, `TotalTokens`, `Latency` |
+| Terminal | `ErrorDelta`, `DoneDelta` | `Error` |
 
-| Type | Category | Purpose |
-|------|----------|---------|
-| `TextStartDelta` / `TextContentDelta` / `TextEndDelta` | LLM | Text streaming |
-| `ToolCallStartDelta` / `ToolCallArgumentDelta` / `ToolCallEndDelta` | LLM | Tool call generation |
-| `ToolExecStartDelta` / `ToolExecDelta` / `ToolExecEndDelta` | Execution | Tool execution with `ToolCallID` for parallel demux |
-| `UsageDelta` | Metadata | Token counts (prompt, completion, total) + wall-clock latency |
-| `ErrorDelta` | Terminal | Error |
-| `DoneDelta` | Terminal | Stream complete |
+All execution deltas carry `ToolCallID` for parallel demux.
 
-### Error Types
+## Agent Loop Flow
 
-Structured errors following Go conventions (`errors.Is`/`errors.As` compatible):
-
-| Type | When | Key Fields |
-|------|------|------------|
-| `ProviderError` | Single provider call fails | `Provider`, `Model`, `Kind` (transient/permanent), `Code`, `Err` |
-| `FallbackError` | All providers in a fallback chain fail | `Errors []error` (multi-unwrap) |
-| `RetryError` | All retry attempts exhausted | `Attempts`, `Last` |
-
-All satisfy `errors.Is(err, ErrProviderFailed)`. Use `IsTransient(err)` to check if retry is appropriate.
-
-### Agent Loop Flow
-
-1. Flatten conversation tree into `[]Message`
+1. Flatten conversation tree into `[]Message` from root to active branch tip
 2. Resolve config from tree (`ConfigContent` blocks, last write wins per field)
 3. Check iteration cap from resolved config
-4. Strip `ConfigContent` from messages
+4. Strip `ConfigContent` from messages before sending to LLM
 5. Compact if configured or `CompactNow` set
-6. Resolve `FileContent` URIs; negotiate with provider via `ContentNegotiator` — pass through natively supported types, run `Extractor` for unsupported types
-7. Send messages + tool defs to provider via `ChatStream`
-8. Aggregate streaming deltas into `AssistantMessage`, forward to caller
-9. Capture `UsageDelta` from provider, enrich with wall-clock latency, forward
-10. Persist assistant message to tree
-11. If tool calls present → execute all tools **in parallel** → collect results into single `SystemMessage` with `ToolResultContent` blocks → persist
-12. Sub-agent tools forward child deltas wrapped in `ToolExecDelta{ToolCallID, Inner}`
-13. Repeat until text-only response or max iterations reached
+6. Send messages + tool defs to provider via `ChatStream`
+7. Aggregate streaming deltas into `AssistantMessage`, forward to caller
+8. Capture `UsageDelta` from provider, enrich with wall-clock latency, forward
+9. Persist assistant message to tree
+10. If tool calls present → execute all tools **in parallel** → collect results into single `SystemMessage` with `ToolResultContent` blocks → persist
+11. Sub-agent tools forward child deltas wrapped in `ToolExecDelta{ToolCallID, Inner}`
+12. Repeat until text-only response or max iterations reached
 
-### Persistence vs Streaming
+## Persistence vs Streaming
 
 - **Messages** are the persistence format — stored as `Node`s in the `Tree`
 - **Deltas** are the streaming format — ephemeral, real-time observation
 - **`Replay(messages)`** bridges the two — converts stored messages back into deltas for session restoration (skips `ConfigContent`)
+
+## Error Handling
+
+Structured errors with `errors.Is`/`errors.As` support:
+
+| Type | When | Key Fields |
+|------|------|------------|
+| `ProviderError` | Single provider fails | `Provider`, `Model`, `Kind` (transient/permanent), `Code`, `Err` |
+| `FallbackError` | All fallback providers fail | `Errors []error` (multi-unwrap) |
+| `RetryError` | All retry attempts exhausted | `Attempts`, `Last` |
+
+All satisfy `errors.Is(err, ErrProviderFailed)`. Use `IsTransient(err)` to check retry eligibility.
 
 ## Commands
 
 | Task | Command |
 |------|---------|
 | Install | `go get github.com/urmzd/agent-sdk` |
-| Test | `go test ./...` |
+| Test all | `go test ./...` |
+| Test verbose | `go test -v ./...` |
+| Test package | `go test ./tree/...` |
 | Format | `gofmt -w .` |
 | Lint | `golangci-lint run` |
 
 ## Code Style
 
 - Go 1.25+, minimal dependencies
-- Sealed interfaces via unexported marker methods
-- Functional options where appropriate
+- Sealed interfaces via unexported marker methods (`isMessage()`, `isDelta()`, `isSystemContent()`, etc.)
+- Functional options for `tree.New` (`WithWAL`, `WithStore`)
 - Streaming-first design — all LLM interaction via channels
 - Structured errors with `Is`/`As`/`Unwrap` — no string matching
+- Data-driven config (`CompactConfig`) over interface-heavy design
 
 ## Adding a New Provider
 
-1. Create a new package (e.g., `openai/`)
-2. Implement `Provider` interface: `ChatStream(ctx, []Message, []ToolDef) (<-chan Delta, error)`
-3. Optionally implement `NamedProvider` for identification
-4. Optionally implement `ContentNegotiator`: `ContentSupport() ContentSupport` — declare which `MediaType` values the provider accepts natively (e.g., images); the agent loop uses this to decide whether to pass `FileContent` directly or run an `Extractor` first
-5. Return `*ProviderError` from `ChatStream` with appropriate `ErrorKind`
-6. Emit `UsageDelta` as the last delta before closing the channel (if token counts are available)
-7. Map provider-specific streaming events to SDK delta types
-8. Add integration tests
+1. Create a package under `provider/` (e.g., `provider/openai/`)
+2. Implement `core.Provider`: `ChatStream(ctx, []Message, []ToolDef) (<-chan Delta, error)`
+3. Optionally implement `core.NamedProvider` for identification
+4. Return `*core.ProviderError` with appropriate `ErrorKind` (use `ClassifyHTTPStatus` for HTTP APIs)
+5. Emit `core.UsageDelta` as the last delta before closing the channel (if token counts are available)
+6. Map provider-specific streaming events to SDK delta types (text → `TextStart`/`TextContent`/`TextEnd`, tool calls → `ToolCallStart`/`ToolCallArgument`/`ToolCallEnd`)
+7. Optionally implement `core.ContentNegotiator` if the provider handles file uploads natively
+8. Add tests

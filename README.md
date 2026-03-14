@@ -2,53 +2,30 @@
 
 A strongly-typed Go SDK for building streaming LLM agent loops.
 
+```
+go get github.com/urmzd/agent-sdk
+```
+
 ## Why?
 
 Most LLM SDKs hand you flat, untyped structs and leave you to build the agent loop yourself:
 
 - **Untyped deltas** — you switch on string fields to figure out what the LLM is streaming.
-- **Flat messages** — system, user, and assistant messages share the same struct with a role string.
+- **Flat messages** — system, user, and assistant share the same struct with a role string.
 - **Coupled agent loops** — tool execution, context compaction, and sub-agents are your problem.
 
 **agent-sdk** solves this:
 
-- **Typed deltas** — sealed `Delta` interface with concrete types for text chunks, tool calls, tool execution, usage metadata, and errors.
-- **Sealed messages** — `Message` interface with distinct types per role and typed content blocks. Only three roles: system, user, assistant.
-- **Parallel tool execution** — multiple tool calls in a single response execute concurrently with streaming attribution.
-- **Sub-agents as agents** — a sub-agent is just an agent called by an agent, with full delta streaming through the parent.
-- **Pluggable providers** — implement one method (`ChatStream`) to integrate any LLM.
-- **Provider resilience** — built-in retry with backoff and multi-provider fallback.
-- **Runtime configuration** — change model, compaction, and iteration limits mid-conversation via `ConfigContent` in the tree.
-- **Usage tracking** — token counts and latency emitted as `UsageDelta` after every LLM call.
-- **Session replay** — restore conversations from the tree as a delta stream.
-
-## Features
-
-- Typed streaming deltas separated by concern (LLM-side vs execution-side vs metadata)
-- Sealed message types per role (system, user, assistant — no fake "tool" role)
-- Tool results as content blocks in system or user messages
-- Parallel tool execution with concurrent goroutines
-- Sub-agent delegation with nested delta forwarding
-- Branching conversation tree with checkpoints, rewind, and compaction
-- Session replay from persisted history
-- Data-driven compaction config (`CompactConfig` with strategy, window size, threshold)
-- Runtime config via `ConfigContent` (model, max iterations, compaction, immediate compaction trigger)
-- Token usage and latency tracking via `UsageDelta`
-- Provider fallback (`FallbackProvider`) — tries providers in order
-- Provider retry (`RetryProvider`) — exponential backoff on transient errors
-- Structured errors (`ProviderError`, `FallbackError`, `RetryError`) with `errors.Is`/`errors.As` support
-- Error classification (transient vs permanent) for retry/fallback decisions
-- Ollama adapter (implements Provider with `NamedProvider` identification)
-- File upload via `FileContent` — attach files by URI (file://, http://, https://)
-- Content negotiation — providers declare native media type support; unsupported types are handled by pluggable extractors
-- Embeddings via `Embedder` interface — batch-first API, implemented by `OllamaEmbedder`
-- 15 built-in `MediaType` constants covering images, documents, audio, and video
-
-## Installation
-
-```bash
-go get github.com/urmzd/agent-sdk
-```
+| Problem | Solution |
+|---------|----------|
+| Untyped streaming | Sealed `Delta` interface with 13 concrete types |
+| Flat messages | Sealed `Message` interface — three roles, typed content blocks |
+| Manual tool dispatch | Parallel tool execution with streaming attribution |
+| No sub-agent model | Sub-agents as tools, with full delta forwarding |
+| Provider lock-in | One method to implement: `ChatStream` |
+| No retry/fallback | Built-in exponential backoff and multi-provider failover |
+| Context overflow | Data-driven compaction (sliding window or summarize) |
+| Static config | Runtime config changes via `ConfigContent` in the tree |
 
 ## Quick Start
 
@@ -60,6 +37,7 @@ import (
     "fmt"
 
     agentsdk "github.com/urmzd/agent-sdk"
+    "github.com/urmzd/agent-sdk/core"
     "github.com/urmzd/agent-sdk/provider/ollama"
 )
 
@@ -73,35 +51,48 @@ func main() {
         Provider:     adapter,
     })
 
-    stream := agent.Invoke(context.Background(), []agentsdk.Message{
-        agentsdk.NewUserMessage("What is the capital of France?"),
+    stream := agent.Invoke(context.Background(), []core.Message{
+        core.NewUserMessage("What is the capital of France?"),
     })
 
     for delta := range stream.Deltas() {
         switch d := delta.(type) {
-        case agentsdk.TextContentDelta:
+        case core.TextContentDelta:
             fmt.Print(d.Content)
-        case agentsdk.UsageDelta:
+        case core.UsageDelta:
             fmt.Printf("\n[tokens: %d prompt, %d completion, latency: %s]\n",
                 d.PromptTokens, d.CompletionTokens, d.Latency)
-        case agentsdk.ToolExecStartDelta:
-            fmt.Printf("\n[tool %s: %s]\n", d.ToolCallID, d.Name)
-        case agentsdk.ToolExecDelta:
-            if inner, ok := d.Inner.(agentsdk.TextContentDelta); ok {
-                fmt.Print(inner.Content)
-            }
-        case agentsdk.ToolExecEndDelta:
-            fmt.Printf("\n[tool %s done]\n", d.ToolCallID)
         }
     }
 }
 ```
 
-## Core Types
+## Table of Contents
 
-### Messages
+- [Messages](#messages)
+- [Deltas](#deltas)
+- [Content Blocks](#content-blocks)
+- [Provider Interface](#provider-interface)
+- [Tool System](#tools)
+- [Agent Loop](#agent-loop)
+- [Sub-Agents](#sub-agents)
+- [Provider Resilience](#provider-resilience)
+- [Structured Errors](#structured-errors)
+- [Runtime Configuration](#runtime-configuration)
+- [Compaction](#compaction)
+- [Conversation Tree](#conversation-tree)
+- [Session Replay](#session-replay)
+- [File Upload](#file-upload)
+- [Embeddings](#embeddings)
+- [Ollama Adapter](#ollama-adapter)
+- [Testing](#testing)
+- [Architecture](#architecture)
 
-There are three roles. Tool results are not a separate role — they are content blocks within system or user messages.
+---
+
+## Messages
+
+Three roles. Tool results are content blocks, not a separate role.
 
 | Type | Role | Content Types |
 |------|------|---------------|
@@ -109,40 +100,76 @@ There are three roles. Tool results are not a separate role — they are content
 | `UserMessage` | `user` | `TextContent`, `ToolResultContent`, `ConfigContent`, `FileContent` |
 | `AssistantMessage` | `assistant` | `TextContent`, `ToolUseContent` |
 
-**Why no `ToolResultMessage`?** A tool result is the environment reporting back what happened. When the SDK auto-executes a tool, the result is a `SystemMessage` (no human was involved). When a human provides the result on interrupt, it's a `UserMessage`. The adapter maps both to the wire format the LLM expects.
+**Why no tool role?** When the SDK auto-executes a tool, the result goes in a `SystemMessage`. When a human provides a result (human-in-the-loop), it's a `UserMessage`. The provider adapter maps both to whatever wire format the LLM expects.
 
-### Deltas
+```go
+// Constructors
+core.NewSystemMessage("You are a helpful assistant.")
+core.NewUserMessage("Hello!")
+core.NewToolResultMessage(core.ToolResultContent{ToolCallID: "abc", Text: "result"})
+core.NewUserToolResultMessage(core.ToolResultContent{ToolCallID: "abc", Text: "human result"})
+core.NewFileMessage("file:///path/to/image.png")
+core.NewUserMessageWithFiles("Describe this", core.FileContent{URI: "file:///img.jpg"})
+```
 
-Deltas are split into three categories: **LLM-side** (what the model generates), **execution-side** (what happens when tools run), and **metadata** (usage and timing).
+## Deltas
 
-| Type | Category | Purpose |
-|------|----------|---------|
-| `TextStartDelta` | LLM | Text block opened |
-| `TextContentDelta` | LLM | Text chunk received |
-| `TextEndDelta` | LLM | Text block closed |
-| `ToolCallStartDelta` | LLM | Model generating a tool call (ID + name) |
-| `ToolCallArgumentDelta` | LLM | Argument JSON chunk |
-| `ToolCallEndDelta` | LLM | Tool call generation complete (parsed arguments) |
-| `ToolExecStartDelta` | Execution | Tool has begun executing (ToolCallID + name) |
-| `ToolExecDelta` | Execution | Inner delta from a streaming tool or sub-agent (ToolCallID + inner delta) |
-| `ToolExecEndDelta` | Execution | Tool finished (ToolCallID + result + error) |
-| `UsageDelta` | Metadata | Token counts (prompt, completion, total) and wall-clock latency |
-| `ErrorDelta` | Terminal | Provider or tool error |
-| `DoneDelta` | Terminal | Stream complete |
+Deltas are split into three categories: **LLM-side** (what the model generates), **execution-side** (what happens when tools run), and **metadata**.
+
+| Type | Category | Fields | Purpose |
+|------|----------|--------|---------|
+| `TextStartDelta` | LLM | — | Text block opened |
+| `TextContentDelta` | LLM | `Content` | Text chunk |
+| `TextEndDelta` | LLM | — | Text block closed |
+| `ToolCallStartDelta` | LLM | `ID`, `Name` | Tool call generation started |
+| `ToolCallArgumentDelta` | LLM | `Content` | JSON argument chunk |
+| `ToolCallEndDelta` | LLM | `Arguments` | Tool call complete (parsed args) |
+| `ToolExecStartDelta` | Execution | `ToolCallID`, `Name` | Tool began executing |
+| `ToolExecDelta` | Execution | `ToolCallID`, `Inner` | Streaming delta from tool/sub-agent |
+| `ToolExecEndDelta` | Execution | `ToolCallID`, `Result`, `Error` | Tool finished |
+| `UsageDelta` | Metadata | `PromptTokens`, `CompletionTokens`, `TotalTokens`, `Latency` | Token usage + wall-clock timing |
+| `ErrorDelta` | Terminal | `Error` | Provider or tool error |
+| `DoneDelta` | Terminal | — | Stream complete |
 
 Every execution delta carries a `ToolCallID` so consumers can demux parallel tool executions.
 
-### Content Blocks
+```go
+for delta := range stream.Deltas() {
+    switch d := delta.(type) {
+    case core.TextContentDelta:
+        fmt.Print(d.Content)
+    case core.ToolExecStartDelta:
+        fmt.Printf("[tool %s started: %s]\n", d.ToolCallID, d.Name)
+    case core.ToolExecDelta:
+        if inner, ok := d.Inner.(core.TextContentDelta); ok {
+            fmt.Print(inner.Content) // sub-agent text
+        }
+    case core.ToolExecEndDelta:
+        fmt.Printf("[tool %s done]\n", d.ToolCallID)
+    case core.UsageDelta:
+        fmt.Printf("[%d prompt + %d completion tokens, %s]\n",
+            d.PromptTokens, d.CompletionTokens, d.Latency)
+    case core.ErrorDelta:
+        fmt.Fprintf(os.Stderr, "error: %v\n", d.Error)
+    case core.DoneDelta:
+        // stream complete
+    }
+}
+```
 
-| Type | Allowed In | Purpose |
-|------|-----------|---------|
-| `TextContent` | System, User, Assistant | Plain text |
-| `ToolUseContent` | Assistant | Tool invocation (ID, name, arguments) |
-| `ToolResultContent` | System, User | Tool execution result (ToolCallID, text) |
-| `ConfigContent` | System, User | Runtime configuration (model, max iterations, compaction) |
-| `FileContent` | User | File attachment (URI, MediaType, Data, Filename) |
+## Content Blocks
+
+| Type | Allowed In | Fields | Purpose |
+|------|-----------|--------|---------|
+| `TextContent` | System, User, Assistant | `Text` | Plain text |
+| `ToolUseContent` | Assistant | `ID`, `Name`, `Arguments` | Tool invocation |
+| `ToolResultContent` | System, User | `ToolCallID`, `Text` | Tool result |
+| `ConfigContent` | System, User | `Model`, `MaxIter`, `Compact`, `CompactNow` | Runtime config |
+| `FileContent` | User | `URI`, `MediaType`, `Data`, `Filename` | File attachment |
 
 ## Provider Interface
+
+Implement one method to integrate any LLM backend:
 
 ```go
 type Provider interface {
@@ -150,185 +177,188 @@ type Provider interface {
 }
 ```
 
-Implement this single method to integrate any LLM backend. Each provider uses its own configured default model. Model selection is handled via `ConfigContent` in the message tree, not as a parameter. The SDK ships an Ollama adapter.
+Each provider uses its own configured default model. Model selection is handled via `ConfigContent` in the message tree, not as a parameter to `ChatStream`.
 
-Providers can optionally implement `NamedProvider` for identification in logs and error messages:
+**Optional interfaces:**
 
 ```go
+// NamedProvider — identification in logs and error messages
 type NamedProvider interface {
     Provider
     Name() string
 }
-```
 
-Providers can optionally implement `ContentNegotiator` to declare which media types they handle natively. When a `FileContent` block is in a message, the SDK checks this interface first. If the provider supports the type natively (e.g., Ollama supports JPEG and PNG via its images field), the `FileContent` is passed through as-is. If not, a registered `Extractor` is used to convert the content. If neither applies, `ErrUnsupportedMediaType` is returned.
-
-```go
+// ContentNegotiator — declare which media types are handled natively
 type ContentNegotiator interface {
     ContentSupport() ContentSupport
 }
-
-// ContentSupport declares which media types a provider handles natively.
-type ContentSupport struct {
-    NativeTypes map[MediaType]bool
-}
 ```
 
-## File Upload & Content Negotiation
+### Implementing a Provider
 
-Attach files to user messages using `FileContent`. The URI is the source of truth — raw bytes are populated at resolution time.
+1. Create a package under `provider/` (e.g., `provider/openai/`)
+2. Implement `core.Provider` — map messages/tools to your wire format, stream deltas back
+3. Optionally implement `core.NamedProvider` for identification
+4. Return `*core.ProviderError` with appropriate `ErrorKind` on failure
+5. Emit `core.UsageDelta` as the last delta before closing the channel
+6. Optionally implement `core.ContentNegotiator` if your provider supports file uploads natively
+
+## Tools
+
+Define tools with JSON schema parameters:
 
 ```go
-// Single file by URI (media type inferred from extension)
-msg := agentsdk.NewFileMessage("file:///path/to/image.png")
-
-// Explicit media type
-msg = agentsdk.NewFileMessage("https://example.com/doc.pdf", agentsdk.MediaPDF)
-
-// Text + files together
-msg = agentsdk.NewUserMessageWithFiles("Describe this image",
-    agentsdk.FileContent{URI: "file:///tmp/photo.jpg", MediaType: agentsdk.MediaJPEG},
-)
-```
-
-### MediaType constants
-
-```go
-agentsdk.MediaJPEG  // "image/jpeg"
-agentsdk.MediaPNG   // "image/png"
-agentsdk.MediaGIF   // "image/gif"
-agentsdk.MediaWebP  // "image/webp"
-agentsdk.MediaPDF   // "application/pdf"
-agentsdk.MediaCSV   // "text/csv"
-agentsdk.MediaMP3   // "audio/mpeg"
-agentsdk.MediaWAV   // "audio/wav"
-agentsdk.MediaMP4   // "video/mp4"
-agentsdk.MediaDOCX  // application/vnd.openxmlformats-officedocument.wordprocessingml.document
-agentsdk.MediaXLSX  // application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
-agentsdk.MediaPPTX  // application/vnd.openxmlformats-officedocument.presentationml.presentation
-agentsdk.MediaHTML  // "text/html"
-agentsdk.MediaText  // "text/plain"
-agentsdk.MediaJSON  // "application/json"
-```
-
-### Resolver interface
-
-A `Resolver` converts a URI to raw bytes. Implement it to add support for custom URI schemes (e.g., `s3://`, `gs://`):
-
-```go
-type Resolver interface {
-    Resolve(ctx context.Context, uri string) (ResolvedFile, error)
+tool := &core.ToolFunc{
+    Def: core.ToolDef{
+        Name:        "greet",
+        Description: "Greet a person",
+        Parameters: core.ParameterSchema{
+            Type:     "object",
+            Required: []string{"name"},
+            Properties: map[string]core.PropertyDef{
+                "name": {Type: "string", Description: "Person's name"},
+            },
+        },
+    },
+    Fn: func(ctx context.Context, args map[string]any) (string, error) {
+        return fmt.Sprintf("Hello, %s!", args["name"]), nil
+    },
 }
 
-// ResolverFunc adapts a plain function to Resolver.
-var myResolver core.ResolverFunc = func(ctx context.Context, uri string) (core.ResolvedFile, error) {
-    // fetch bytes, return core.ResolvedFile{Data: ..., MediaType: ...}
-}
+registry := core.NewToolRegistry(tool)
 ```
 
-### Extractor interface
+**`ToolRegistry` methods:**
 
-An `Extractor` converts raw bytes into `[]UserContent` blocks. Use this to add extraction for types your provider does not handle natively (e.g., parse a PDF into text):
+| Method | Signature | Purpose |
+|--------|-----------|---------|
+| `Get` | `(name string) (Tool, bool)` | Look up a tool by name |
+| `Register` | `(Tool)` | Add a tool to the registry |
+| `Definitions` | `() []ToolDef` | Return all tool schemas (for the LLM) |
+| `Execute` | `(ctx, name, args) (string, error)` | Run a tool by name |
+
+When the LLM requests multiple tool calls in a single response, all tools execute concurrently. Results are collected into a single `SystemMessage` with one `ToolResultContent` block per tool call.
+
+## Agent Loop
+
+`Agent.Invoke()` runs an iterative loop:
+
+1. Flatten the conversation tree into `[]Message`
+2. Resolve config from the tree (`ConfigContent` blocks, last write wins per field)
+3. Check iteration cap
+4. Strip `ConfigContent` from messages before sending to LLM
+5. Compact if configured or `CompactNow` is set
+6. Send messages + tool definitions to the provider via `ChatStream`
+7. Aggregate streaming deltas into a complete `AssistantMessage`, forward to caller
+8. Capture `UsageDelta` from the provider, enrich with wall-clock latency, forward
+9. Persist the assistant message to the tree
+10. If tool calls present → execute all tools **in parallel** → collect results into single `SystemMessage` → persist
+11. Sub-agent tools forward child deltas wrapped in `ToolExecDelta{ToolCallID, Inner}`
+12. Repeat until text-only response or max iterations reached
+
+All deltas are forwarded to the caller's `EventStream` in real-time.
 
 ```go
-type Extractor interface {
-    Extract(ctx context.Context, data []byte, mediaType MediaType) ([]UserContent, error)
-}
+agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+    Name:         "assistant",
+    SystemPrompt: "You are a helpful assistant.",
+    Provider:     adapter,
+    Tools:        registry,
+    MaxIter:      10,        // default: 10
+    CompactCfg:   &core.CompactConfig{Strategy: core.CompactSlidingWindow, WindowSize: 20},
+})
 
-// ExtractorFunc adapts a plain function to Extractor.
-var pdfExtractor core.ExtractorFunc = func(ctx context.Context, data []byte, mt core.MediaType) ([]core.UserContent, error) {
-    text := extractTextFromPDF(data)
-    return []core.UserContent{core.TextContent{Text: text}}, nil
-}
+// Invoke on the active branch (default: "main")
+stream := agent.Invoke(ctx, []core.Message{core.NewUserMessage("Hello!")})
+
+// Or invoke on a specific branch
+stream = agent.Invoke(ctx, messages, core.BranchID("feature-branch"))
+
+// EventStream API
+for delta := range stream.Deltas() { /* ... */ }
+err := stream.Wait()   // block until done
+stream.Cancel()         // stop the stream
 ```
 
-### Sentinel errors
+## Sub-Agents
 
-| Error | When |
-|-------|------|
-| `ErrUnsupportedMediaType` | Provider does not support the media type and no extractor is registered |
-| `ErrResolverNotFound` | No resolver is registered for the URI scheme |
-
-## Embeddings
-
-Generate vector embeddings using the `Embedder` interface. The API is batch-first — pass multiple texts in a single call:
+A sub-agent is just an agent called by an agent. Sub-agents are registered as tools (`delegate_to_<name>`) and execute within the parallel tool dispatch:
 
 ```go
-type Embedder interface {
-    Embed(ctx context.Context, texts []string) ([][]float32, error)
-}
+agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+    Provider: adapter,
+    SubAgents: []agentsdk.SubAgentDef{
+        {
+            Name:         "researcher",
+            Description:  "Searches the web for information",
+            SystemPrompt: "You are a research assistant.",
+            Provider:     adapter,
+            Tools:        core.NewToolRegistry(searchTool),
+            MaxIter:      5,
+        },
+    },
+})
 ```
 
-### OllamaEmbedder
+When a sub-agent executes:
+- Its deltas are forwarded through the parent's stream as `ToolExecDelta{ToolCallID, Inner}`
+- Multiple sub-agents invoked in the same response run concurrently
+- Sub-agents can have their own sub-agents (arbitrary nesting)
+- Each child agent gets a fresh conversation tree — context isolation is total
+
+The `SubAgentInvoker` interface enables the agent loop to detect sub-agent tools and stream their deltas instead of just collecting a string result:
 
 ```go
-import "github.com/urmzd/agent-sdk/provider/ollama"
-
-client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
-embedder := ollama.NewEmbedder(client)
-
-vecs, err := embedder.Embed(ctx, []string{"hello world", "goodbye world"})
-// vecs[0] is the embedding for "hello world"
-// vecs[1] is the embedding for "goodbye world"
+type SubAgentInvoker interface {
+    InvokeAgent(ctx context.Context, task string) *EventStream
+}
 ```
-
-The embed model is the third argument to `ollama.NewClient`. `OllamaEmbedder` calls the Ollama embedding endpoint once per text and returns results in input order.
 
 ## Provider Resilience
 
 ### Retry
 
-Wrap any provider with exponential backoff retry for transient errors (429, 5xx, timeouts):
+Wrap any provider with exponential backoff for transient errors:
 
 ```go
 import "github.com/urmzd/agent-sdk/provider/retry"
 
-retryCfg := retry.Config{
+provider := retry.New(adapter, retry.Config{
     MaxAttempts: 3,
     BaseDelay:   500 * time.Millisecond,
     MaxDelay:    10 * time.Second,
     Multiplier:  2.0,
-}
-provider := retry.New(adapter, retryCfg)
+})
+
+// Or use defaults: 3 attempts, 500ms base, 10s cap, 2x backoff
+provider = retry.New(adapter, retry.DefaultConfig())
 ```
 
-By default, only transient errors are retried. Set `ShouldRetry` on the config to customize.
+By default, only transient errors (429, 5xx, timeouts) are retried. Set `ShouldRetry` to customize.
 
 ### Fallback
 
-Try multiple providers in order — if one fails, fall back to the next:
+Try multiple providers in order:
 
 ```go
 import "github.com/urmzd/agent-sdk/provider/fallback"
-import "github.com/urmzd/agent-sdk/provider/ollama"
-
-primary := ollama.NewAdapter(ollama.NewClient("http://primary:11434", "llama3", ""))
-backup  := ollama.NewAdapter(ollama.NewClient("http://backup:11434", "llama3", ""))
 
 provider := fallback.New(primary, backup)
-```
 
-By default, falls back on any error. Set `FallbackOn` on the returned `*fallback.Provider` to control which errors trigger fallback (e.g., `core.IsTransient` for transient-only).
+// Fallback on transient errors only
+provider.FallbackOn = core.IsTransient
+```
 
 ### Composition
 
-Retry and fallback compose naturally:
+Retry and fallback compose naturally — each provider retries independently before falling back:
 
 ```go
-retryCfg := retry.DefaultConfig()
-
 provider := fallback.New(
-    retry.New(primary, retryCfg),
-    retry.New(backup, retryCfg),
+    retry.New(primary, retry.DefaultConfig()),
+    retry.New(backup, retry.DefaultConfig()),
 )
-
-agent := agentsdk.NewAgent(agentsdk.AgentConfig{
-    Provider: provider,
-    // ...
-})
 ```
-
-Each provider retries independently before falling back to the next.
 
 ## Structured Errors
 
@@ -344,14 +374,12 @@ All provider errors satisfy `errors.Is(err, ErrProviderFailed)`.
 
 ### Error Classification
 
-Errors are classified as **transient** (retry-worthy) or **permanent**:
-
 ```go
-if agentsdk.IsTransient(err) {
+if core.IsTransient(err) {
     // safe to retry: 429, 5xx, timeout, connection refused
 }
 
-kind := agentsdk.ClassifyHTTPStatus(statusCode) // ErrorKindTransient or ErrorKindPermanent
+kind := core.ClassifyHTTPStatus(statusCode) // ErrorKindTransient or ErrorKindPermanent
 ```
 
 | Transient (retry) | Permanent (don't retry) |
@@ -362,28 +390,36 @@ kind := agentsdk.ClassifyHTTPStatus(statusCode) // ErrorKindTransient or ErrorKi
 | Connection refused | 404 Not Found |
 | Timeout | Other 4xx |
 
+### Sentinel Errors
+
+| Error | When |
+|-------|------|
+| `ErrToolNotFound` | Tool name not in registry |
+| `ErrMaxIterations` | Agent loop exceeded iteration cap |
+| `ErrStreamCanceled` | Context canceled or `stream.Cancel()` called |
+| `ErrProviderFailed` | Any provider error (use `errors.Is`) |
+| `ErrUnsupportedMediaType` | Provider does not support the media type |
+| `ErrResolverNotFound` | No resolver registered for the URI scheme |
+
 ## Runtime Configuration
 
-Agent behavior can be changed mid-conversation by adding `ConfigContent` to the tree. The agent reads config from the tree each iteration — last write wins per field. Zero values mean "no change".
+Change agent behavior mid-conversation by adding `ConfigContent` to the tree. The agent reads config each iteration — last write wins per field. Zero values mean "no change".
 
 ```go
 // Change model mid-conversation
-agent.Invoke(ctx, []agentsdk.Message{
-    agentsdk.UserMessage{Content: []agentsdk.UserContent{
-        agentsdk.ConfigContent{Model: "gpt-4"},
-        agentsdk.TextContent{Text: "Use the better model for this question."},
+agent.Invoke(ctx, []core.Message{
+    core.UserMessage{Content: []core.UserContent{
+        core.ConfigContent{Model: "gpt-4"},
+        core.TextContent{Text: "Use the better model for this."},
     }},
 })
 
 // Trigger immediate compaction
-agent.Invoke(ctx, []agentsdk.Message{
-    agentsdk.SystemMessage{Content: []agentsdk.SystemContent{
-        agentsdk.ConfigContent{
+agent.Invoke(ctx, []core.Message{
+    core.SystemMessage{Content: []core.SystemContent{
+        core.ConfigContent{
             CompactNow: true,
-            Compact: &agentsdk.CompactConfig{
-                Strategy:   agentsdk.CompactSlidingWindow,
-                WindowSize: 10,
-            },
+            Compact:    &core.CompactConfig{Strategy: core.CompactSlidingWindow, WindowSize: 10},
         },
     }},
 })
@@ -393,19 +429,19 @@ agent.Invoke(ctx, []agentsdk.Message{
 
 | Field | Type | Effect |
 |-------|------|--------|
-| `Model` | `string` | Model name passed to Provider (empty = use default) |
+| `Model` | `string` | Override model name (empty = use default) |
 | `MaxIter` | `int` | Max loop iterations (0 = no change) |
 | `Compact` | `*CompactConfig` | Compaction strategy (nil = no change) |
 | `CompactNow` | `bool` | Trigger immediate compaction this iteration |
 
-### CompactConfig
+## Compaction
 
-Data-driven compaction configuration that replaces the old `Compactor` interface field:
+Data-driven compaction configuration:
 
 ```go
 agentsdk.AgentConfig{
-    CompactCfg: &agentsdk.CompactConfig{
-        Strategy:   agentsdk.CompactSlidingWindow,
+    CompactCfg: &core.CompactConfig{
+        Strategy:   core.CompactSlidingWindow,
         WindowSize: 20,
     },
 }
@@ -417,127 +453,161 @@ agentsdk.AgentConfig{
 | `CompactSlidingWindow` | Keep system prompt + last N messages |
 | `CompactSummarize` | Summarize older messages via the provider when threshold exceeded |
 
-## Usage Tracking
-
-Every LLM call emits a `UsageDelta` with token counts and wall-clock latency:
+The `Compactor` interface is also available for custom implementations:
 
 ```go
-for delta := range stream.Deltas() {
-    if u, ok := delta.(agentsdk.UsageDelta); ok {
-        fmt.Printf("Tokens: %d prompt, %d completion (%s)\n",
-            u.PromptTokens, u.CompletionTokens, u.Latency)
-    }
+type Compactor interface {
+    Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error)
 }
 ```
 
-If the provider reports token usage (e.g., Ollama's `prompt_eval_count`/`eval_count`), those counts are included. Latency is always measured by the agent loop regardless of provider support.
+## Conversation Tree
 
-## Tool System
-
-Define tools with JSON schema parameters:
+All messages are persisted to a branching conversation tree. The tree is the single source of truth — the flat `[]Message` slice the LLM sees is derived from it each iteration.
 
 ```go
-tool := &agentsdk.ToolFunc{
-    Def: agentsdk.ToolDef{
-        Name:        "greet",
-        Description: "Greet a person",
-        Parameters: agentsdk.ParameterSchema{
-            Type:     "object",
-            Required: []string{"name"},
-            Properties: map[string]agentsdk.PropertyDef{
-                "name": {Type: "string", Description: "Person's name"},
-            },
-        },
-    },
-    Fn: func(ctx context.Context, args map[string]any) (string, error) {
-        return fmt.Sprintf("Hello, %s!", args["name"]), nil
-    },
-}
+tr := agent.Tree()
 
-registry := agentsdk.NewToolRegistry(tool)
+// Key operations
+tr.AddChild(parentID, msg)                        // append a message
+tr.Branch(fromNodeID, "experiment", msg)           // fork from any node
+tr.UpdateUserMessage(nodeID, newMsg)               // edit → creates new branch
+tr.SetActive(branchID)                             // switch branches
+tr.Tip(branchID)                                   // get branch tip node
+tr.FlattenBranch(branchID)                         // walk root-to-tip → []Message
+tr.Checkpoint(branchID, "before-refactor")         // save branch state
+tr.Rewind(checkpointID)                            // restore → new branch from checkpoint
+tr.Archive(nodeID, "cleanup", true)                // soft-delete (recursive)
+tr.Restore(nodeID, true)                           // un-archive
+tr.Branches()                                      // list all branches
+tr.Children(nodeID)                                // list child nodes
+tr.Path(nodeID)                                    // root-to-node path
 ```
 
-When the LLM requests multiple tool calls in a single response, all tools execute concurrently. Results are collected into a single `SystemMessage` with one `ToolResultContent` block per tool call.
-
-## Agent Loop
-
-`Agent.Invoke()` runs an iterative loop:
-
-1. Flatten the conversation tree into `[]Message`
-2. Resolve config from the tree (`ConfigContent` blocks, last write wins)
-3. Check iteration cap
-4. Strip `ConfigContent` from messages
-5. Compact if configured or `CompactNow` is set
-6. Resolve `FileContent` URIs and negotiate with provider via `PrepareMessages` — native types pass through, others go through extractors
-7. Send messages + tool definitions to the provider via `ChatStream`
-8. Aggregate streaming deltas into a complete `AssistantMessage`, forward to caller
-9. Capture `UsageDelta` from the provider, enrich with wall-clock latency, forward to caller
-10. Persist the assistant message to the tree
-11. If the message contains `ToolUseContent`, execute all tool calls **in parallel**
-12. Collect results into a single `SystemMessage` with `ToolResultContent` blocks and persist
-13. Repeat until the assistant responds with text only (no tool calls) or max iterations reached
-
-All deltas are forwarded to the caller's `EventStream` in real-time.
-
-## Sub-Agents
-
-A sub-agent is just an agent called by an agent. Sub-agents are registered as tools (`delegate_to_<name>`) and execute within the parallel tool dispatch:
+Optional persistence via `WAL` and `Store` interfaces:
 
 ```go
-agent := agentsdk.NewAgent(agentsdk.AgentConfig{
-    // ...
-    SubAgents: []agentsdk.SubAgentDef{
-        {
-            Name:         "researcher",
-            Description:  "Searches the web for information",
-            SystemPrompt: "You are a research assistant.",
-            Provider:     adapter,
-            Tools:        agentsdk.NewToolRegistry(searchTool),
-            MaxIter:      5,
-        },
-    },
-})
+import "github.com/urmzd/agent-sdk/store/memwal"
+
+wal := memwal.New()
+tr, _ := tree.New(core.NewSystemMessage("..."), tree.WithWAL(wal), tree.WithStore(store))
 ```
-
-When a sub-agent executes:
-- Its deltas are forwarded through the parent's stream, wrapped in `ToolExecDelta{ToolCallID, Inner}` for attribution.
-- Multiple sub-agents invoked in the same response run concurrently.
-- Sub-agents can have their own sub-agents (arbitrary nesting).
-- Each child agent gets a fresh conversation tree — context isolation is total.
-
-The `SubAgentInvoker` interface enables the agent loop to detect sub-agent tools and stream their deltas instead of just collecting a string result.
 
 ## Session Replay
 
 Restore a conversation from the tree as a delta stream:
 
 ```go
-messages, _ := tree.FlattenBranch("main")
+messages, _ := agent.Tree().FlattenBranch("main")
 stream := agentsdk.Replay(messages)
 
 for delta := range stream.Deltas() {
     // Same delta types as a live conversation.
-    // ConfigContent blocks are automatically skipped.
+    // Only assistant messages and tool results produce deltas.
 }
 ```
 
-This enables session restoration — clients receive the same delta types as if the conversation happened live.
+## File Upload
 
-## Conversation Tree
+Attach files to user messages using `FileContent`. The interfaces below enable pluggable URI resolution and content extraction for provider adapters.
 
-All messages are persisted to a branching conversation tree. The tree is the single source of truth; the flat `[]Message` slice the LLM sees is derived from it on every iteration.
+```go
+// Single file by URI
+msg := core.NewFileMessage("file:///path/to/image.png")
 
-Key operations:
-- `AddChild` — append a message to a branch
-- `Branch` — fork from any node
-- `UpdateUserMessage` — edit a user message by creating a new branch
-- `Checkpoint` / `Rewind` — save and restore branch state
-- `Archive` / `Restore` — soft-delete nodes
-- `Compact` — token-budget-aware summarization
-- `FlattenBranch` — walk root-to-tip, skip archived nodes
-- `Diff` — compare two branches
+// Explicit media type
+msg = core.NewFileMessage("https://example.com/doc.pdf", core.MediaPDF)
 
-Optional persistence via `WAL` (write-ahead log) and `Store` interfaces.
+// Text + files together
+msg = core.NewUserMessageWithFiles("Describe this image",
+    core.FileContent{URI: "file:///tmp/photo.jpg", MediaType: core.MediaJPEG},
+)
+```
+
+### MediaType Constants
+
+```go
+core.MediaJPEG   // "image/jpeg"
+core.MediaPNG    // "image/png"
+core.MediaGIF    // "image/gif"
+core.MediaWebP   // "image/webp"
+core.MediaPDF    // "application/pdf"
+core.MediaCSV    // "text/csv"
+core.MediaMP3    // "audio/mpeg"
+core.MediaWAV    // "audio/wav"
+core.MediaMP4    // "video/mp4"
+core.MediaDOCX   // "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+core.MediaXLSX   // "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+core.MediaPPTX   // "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+core.MediaHTML   // "text/html"
+core.MediaText   // "text/plain"
+core.MediaJSON   // "application/json"
+```
+
+### Extensibility Interfaces
+
+**Resolver** — convert a URI to raw bytes. Implement to add support for custom URI schemes (e.g., `s3://`, `gs://`):
+
+```go
+type Resolver interface {
+    Resolve(ctx context.Context, uri string) (ResolvedFile, error)
+}
+
+// Adapt a function
+var myResolver core.ResolverFunc = func(ctx context.Context, uri string) (core.ResolvedFile, error) {
+    data, _ := fetchFromS3(uri)
+    return core.ResolvedFile{Data: data, MediaType: core.MediaPDF}, nil
+}
+```
+
+**Extractor** — convert raw bytes into content blocks. Use for types your provider doesn't handle natively:
+
+```go
+type Extractor interface {
+    Extract(ctx context.Context, data []byte, mediaType MediaType) ([]UserContent, error)
+}
+
+// Adapt a function
+var pdfExtractor core.ExtractorFunc = func(ctx context.Context, data []byte, mt core.MediaType) ([]core.UserContent, error) {
+    text := extractTextFromPDF(data)
+    return []core.UserContent{core.TextContent{Text: text}}, nil
+}
+```
+
+**ContentNegotiator** — providers declare native media type support:
+
+```go
+type ContentNegotiator interface {
+    ContentSupport() ContentSupport
+}
+
+type ContentSupport struct {
+    NativeTypes map[MediaType]bool
+}
+```
+
+## Embeddings
+
+Generate vector embeddings using the `Embedder` interface. The API is batch-first:
+
+```go
+type Embedder interface {
+    Embed(ctx context.Context, texts []string) ([][]float32, error)
+}
+```
+
+### OllamaEmbedder
+
+```go
+client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
+embedder := ollama.NewEmbedder(client)
+
+vecs, err := embedder.Embed(ctx, []string{"hello world", "goodbye world"})
+// vecs[0] → embedding for "hello world"
+// vecs[1] → embedding for "goodbye world"
+```
+
+The embed model is the third argument to `ollama.NewClient`.
 
 ## Ollama Adapter
 
@@ -545,15 +615,50 @@ Optional persistence via `WAL` (write-ahead log) and `Store` interfaces.
 client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
 adapter := ollama.NewAdapter(client)
 
-// adapter implements core.Provider, core.NamedProvider, and core.ContentNegotiator
-// Emits UsageDelta with token counts from Ollama's response
-// Returns structured ProviderError with transient/permanent classification
-// Also exposes: Generate, GenerateWithModel, GenerateStream, Embed, ExtractEntities
+// adapter implements:
+//   core.Provider          — ChatStream
+//   core.NamedProvider     — Name() returns "ollama"
+//   core.ContentNegotiator — native JPEG/PNG support
 ```
 
-The adapter implements `ContentNegotiator` and declares native support for JPEG and PNG. When a `UserMessage` contains `FileContent` blocks with those types, the adapter base64-encodes the raw bytes into Ollama's `images` field automatically.
+The adapter handles `FileContent` blocks with JPEG/PNG by base64-encoding raw bytes into Ollama's `images` field. It emits `UsageDelta` with token counts from Ollama's response and returns structured `ProviderError` with transient/permanent classification.
 
-For embeddings, use `ollama.NewEmbedder(client)` — see the [Embeddings](#embeddings) section.
+**Convenience methods** (not part of the Provider interface):
+
+| Method | Purpose |
+|--------|---------|
+| `Generate(ctx, prompt)` | Non-streaming generate |
+| `GenerateWithModel(ctx, prompt, model, format, options)` | Generate with specific model |
+| `GenerateStream(ctx, prompt)` | Streaming generate |
+| `Embed(ctx, text)` | Single-text embedding |
+| `ExtractEntities(ctx, text)` | LLM-based entity extraction |
+
+## Testing
+
+```bash
+# Run all tests
+go test ./...
+
+# Run with verbose output
+go test -v ./...
+
+# Run a specific package
+go test ./tree/...
+go test ./provider/retry/...
+go test ./provider/fallback/...
+go test ./provider/ollama/...
+
+# Run integration tests (requires Ollama running)
+go test -v -run TestIntegration ./...
+```
+
+The test suite covers:
+- **`integration_test.go`** — full agent loop: tool execution, sub-agents, config resolution, compaction, session replay, error handling
+- **`tree/tree_test.go`** — tree operations: branching, checkpoints, rewind, archive, flatten
+- **`provider/retry/retry_test.go`** — retry logic, backoff timing, error classification
+- **`provider/fallback/fallback_test.go`** — failover behavior, FallbackOn predicates
+- **`provider/ollama/embed_test.go`** — embedder tests
+- **`errors_test.go`** — error wrapping, `Is`/`As` compatibility
 
 ## Architecture
 
@@ -563,29 +668,22 @@ For embeddings, use `ollama.NewEmbedder(client)` — see the [Embeddings](#embed
 | `aggregator.go` | `DefaultAggregator` — reconstruct messages from deltas |
 | `stream.go` | `EventStream`, `Replay` |
 | `subagent.go` | `SubAgentDef`, `SubAgentInvoker` |
-| `core/message.go` | Sealed `Message` interface + convenience constructors (`NewFileMessage`, `NewUserMessageWithFiles`) |
+| `core/message.go` | Sealed `Message` interface + convenience constructors |
 | `core/content.go` | Content blocks: `TextContent`, `ToolUseContent`, `ToolResultContent`, `ConfigContent`, `FileContent`; `MediaType` constants |
 | `core/delta.go` | Sealed `Delta` interface (LLM-side + execution-side + metadata + terminal) |
-| `core/provider.go` | `Provider` and `NamedProvider` interfaces |
-| `core/embedder.go` | `Embedder` interface — batch vector embedding |
-| `core/resolver.go` | `Resolver` interface + `ResolverFunc` adapter + `ResolvedFile` struct |
-| `core/extractor.go` | `Extractor` interface + `ExtractorFunc` adapter |
-| `core/negotiate.go` | `ContentNegotiator` optional provider interface + `ContentSupport` struct |
-| `core/errors.go` | Structured errors (`ProviderError`, `FallbackError`, `RetryError`), sentinels, classification |
+| `core/provider.go` | `Provider`, `NamedProvider`, `ProviderName()` |
 | `core/tool.go` | `Tool`, `ToolDef`, `ToolFunc`, `ToolRegistry` |
-| `core/compactor.go` | Compaction strategies + `CompactConfig` data-driven config |
-| `core/node.go` | `Node`, `TreePath`, `BranchID`, `NodeID` |
+| `core/errors.go` | Structured errors, sentinels, classification |
+| `core/compactor.go` | Compaction strategies + `CompactConfig` |
+| `core/embedder.go` | `Embedder` interface |
+| `core/resolver.go` | `Resolver` interface + `ResolverFunc` adapter |
+| `core/extractor.go` | `Extractor` interface + `ExtractorFunc` adapter |
+| `core/negotiate.go` | `ContentNegotiator` + `ContentSupport` |
+| `core/node.go` | `Node`, `TreePath`, `BranchID`, `NodeID`, `CheckpointID` |
 | `core/store.go` | `Store` persistence interface |
 | `core/wal.go` | `WAL` write-ahead log interface |
-| `tree/tree.go` | Branching conversation tree |
-| `tree/flatten.go` | `FlattenBranch`, `FlattenAnnotated` |
-| `tree/compact.go` | Tree-level compaction |
-| `tree/diff.go` | Branch diff |
+| `tree/` | Branching conversation tree, flatten, compact, diff |
 | `store/memwal/` | In-memory WAL implementation |
-| `provider/content.go` | `ResolverRegistry`, `ExtractorRegistry`, `PrepareMessages` — URI resolution, content negotiation, built-in file/http resolvers |
-| `provider/ollama/adapter.go` | Ollama provider adapter (implements `Provider`, `NamedProvider`, `ContentNegotiator`) |
-| `provider/ollama/client.go` | Ollama HTTP client |
-| `provider/ollama/embed.go` | `OllamaEmbedder` — implements `core.Embedder` |
-| `provider/ollama/types.go` | Ollama wire types |
-| `provider/retry/` | `RetryProvider` — exponential backoff retry |
-| `provider/fallback/` | `FallbackProvider` — multi-provider failover |
+| `provider/retry/` | Exponential backoff retry |
+| `provider/fallback/` | Multi-provider failover |
+| `provider/ollama/` | Ollama adapter (Provider, ContentNegotiator, Embedder) |
