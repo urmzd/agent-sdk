@@ -14,10 +14,17 @@ type Embedder struct {
 }
 
 // NewEmbedder creates a new OpenAI embedder.
-func NewEmbedder(apiKey, model string, opts ...option.RequestOption) *Embedder {
-	allOpts := append([]option.RequestOption{option.WithAPIKey(apiKey)}, opts...)
+func NewEmbedder(apiKey, model string, opts ...Option) *Embedder {
+	cfg := &config{}
+	for _, o := range opts {
+		o(cfg)
+	}
+	clientOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if cfg.baseURL != "" {
+		clientOpts = append(clientOpts, option.WithBaseURL(cfg.baseURL))
+	}
 	return &Embedder{
-		client: openai.NewClient(allOpts...),
+		client: openai.NewClient(clientOpts...),
 		model:  openai.EmbeddingModel(model),
 	}
 }

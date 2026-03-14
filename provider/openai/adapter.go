@@ -14,6 +14,18 @@ import (
 	"github.com/urmzd/agent-sdk/core"
 )
 
+// Option configures the OpenAI adapter.
+type Option func(*config)
+
+type config struct {
+	baseURL string
+}
+
+// WithBaseURL overrides the default OpenAI API base URL.
+func WithBaseURL(url string) Option {
+	return func(c *config) { c.baseURL = url }
+}
+
 // Adapter wraps the official OpenAI SDK client and implements core.Provider,
 // core.NamedProvider, core.StructuredOutputProvider, and core.ContentNegotiator.
 type Adapter struct {
@@ -22,10 +34,17 @@ type Adapter struct {
 }
 
 // NewAdapter creates a new OpenAI provider adapter using the official SDK.
-func NewAdapter(apiKey, model string, opts ...option.RequestOption) *Adapter {
-	allOpts := append([]option.RequestOption{option.WithAPIKey(apiKey)}, opts...)
+func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
+	cfg := &config{}
+	for _, o := range opts {
+		o(cfg)
+	}
+	clientOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if cfg.baseURL != "" {
+		clientOpts = append(clientOpts, option.WithBaseURL(cfg.baseURL))
+	}
 	return &Adapter{
-		client: openai.NewClient(allOpts...),
+		client: openai.NewClient(clientOpts...),
 		model:  openai.ChatModel(model),
 	}
 }
