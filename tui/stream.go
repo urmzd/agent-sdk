@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/urmzd/agent-sdk/core"
 )
@@ -283,7 +284,8 @@ type VerboseResult struct {
 
 // StreamVerbose consumes deltas from ch and writes styled progress output
 // to w. It does not require an interactive terminal. If w is nil, os.Stdout
-// is used. Returns the accumulated text output and any error.
+// is used. All delta types are logged for a complete trace. Returns the
+// accumulated coordinator text output and any error.
 func StreamVerbose(title string, ch <-chan core.Delta, w io.Writer) VerboseResult {
 	if w == nil {
 		w = os.Stdout
@@ -292,47 +294,161 @@ func StreamVerbose(title string, ch <-chan core.Delta, w io.Writer) VerboseResul
 	fmt.Fprintln(w, titleStyle.Render(title))
 	fmt.Fprintln(w)
 
-	agentNames := map[string]string{} // toolCallID → name
+	agentNames := map[string]string{}    // toolCallID → name
+	agentNewLine := map[string]bool{}    // toolCallID → needs prefix on next chunk
+	agentStarted := map[string]bool{}    // toolCallID → has received any text
 	var text strings.Builder
+	coordinatorStreaming := false // tracks whether coordinator text is mid-line
+
+	// ensureNewline prints a newline if the previous output didn't end with one.
+	ensureNewline := func() {
+		if coordinatorStreaming {
+			fmt.Fprintln(w)
+			coordinatorStreaming = false
+		}
+	}
 
 	for delta := range ch {
 		switch d := delta.(type) {
+
+		// ── LLM text streaming ──────────────────────────────────────
+		case core.TextStartDelta:
+			ensureNewline()
+
+		case core.TextContentDelta:
+			text.WriteString(d.Content)
+			fmt.Fprint(w, d.Content)
+			coordinatorStreaming = true
+
+		case core.TextEndDelta:
+			ensureNewline()
+
+		// ── LLM tool call streaming ─────────────────────────────────
+		case core.ToolCallStartDelta:
+			ensureNewline()
+			fmt.Fprintln(w, stageStyle.Render(
+				fmt.Sprintf("[tool-call] %s (id=%s)", d.Name, d.ID)))
+
+		case core.ToolCallArgumentDelta:
+			// argument JSON fragments — skip in verbose mode
+
+		case core.ToolCallEndDelta:
+			// tool call fully parsed — logged at exec start
+
+		// ── Tool execution ──────────────────────────────────────────
 		case core.ToolExecStartDelta:
+			ensureNewline()
 			agentNames[d.ToolCallID] = d.Name
+			agentNewLine[d.ToolCallID] = true // first chunk gets the prefix
+			agentStarted[d.ToolCallID] = false
 			fmt.Fprintln(w, FormatDelegateStart(d.Name))
 
 		case core.ToolExecDelta:
 			if inner, ok := d.Inner.(core.TextContentDelta); ok {
 				name := agentNames[d.ToolCallID]
-				fmt.Fprint(w, FormatAgentOutput(name, inner.Content))
+				agentStarted[d.ToolCallID] = true
+				content := inner.Content
+
+				// Print prefix at start of each new line of sub-agent output.
+				if agentNewLine[d.ToolCallID] {
+					fmt.Fprint(w, FormatAgentOutput(name, ""))
+					agentNewLine[d.ToolCallID] = false
+				}
+				// If the content contains newlines, add prefix after each one.
+				if strings.Contains(content, "\n") {
+					prefix := FormatAgentOutput(name, "")
+					lines := strings.Split(content, "\n")
+					for i, line := range lines {
+						if i > 0 {
+							fmt.Fprint(w, prefix)
+						}
+						fmt.Fprint(w, line)
+						if i < len(lines)-1 {
+							fmt.Fprintln(w)
+						}
+					}
+					// If content ended with \n, next chunk needs a prefix
+					if strings.HasSuffix(content, "\n") {
+						agentNewLine[d.ToolCallID] = true
+					}
+				} else {
+					fmt.Fprint(w, content)
+				}
 			}
 
 		case core.ToolExecEndDelta:
 			name := agentNames[d.ToolCallID]
+			// ensure sub-agent output ends on its own line
+			if agentStarted[d.ToolCallID] && !agentNewLine[d.ToolCallID] {
+				fmt.Fprintln(w)
+			}
 			if d.Error != "" {
 				fmt.Fprintln(w, FormatAgentError(name, d.Error))
 			} else {
 				fmt.Fprintln(w, FormatAgentDone(name))
 			}
 
-		case core.TextContentDelta:
-			text.WriteString(d.Content)
-			fmt.Fprint(w, d.Content)
+		// ── Markers ─────────────────────────────────────────────────
+		case core.MarkerDelta:
+			ensureNewline()
+			fmt.Fprintln(w, verboseDelegateMsg.Render(
+				fmt.Sprintf("[approval required] tool=%s id=%s", d.ToolName, d.ToolCallID)))
+			for _, m := range d.Markers {
+				fmt.Fprintln(w, verboseDelegateMsg.Render(
+					fmt.Sprintf("  marker: %s — %s", m.Kind, m.Message)))
+			}
 
+		// ── Metadata ────────────────────────────────────────────────
 		case core.UsageDelta:
-			fmt.Fprintf(w, "\n%s\n", stageStyle.Render(
+			ensureNewline()
+			fmt.Fprintln(w, stageStyle.Render(
 				fmt.Sprintf("[%d prompt + %d completion tokens, %s]",
 					d.PromptTokens, d.CompletionTokens, d.Latency)))
 
+		// ── Terminal ────────────────────────────────────────────────
 		case core.ErrorDelta:
+			ensureNewline()
 			fmt.Fprintln(w, statusError.Render(fmt.Sprintf("Error: %v", d.Error)))
 			return VerboseResult{Text: text.String(), Err: d.Error}
 
 		case core.DoneDelta:
-			fmt.Fprintln(w)
+			ensureNewline()
 			return VerboseResult{Text: text.String()}
 		}
 	}
 
 	return VerboseResult{Text: text.String()}
+}
+
+// ── Markdown rendering ──────────────────────────────────────────────
+
+// RenderMarkdown renders markdown text as styled terminal output using
+// glamour. It auto-detects the terminal's color profile. If rendering
+// fails, the raw text is returned unchanged.
+func RenderMarkdown(md string) string {
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(80),
+	)
+	if err != nil {
+		return md
+	}
+	out, err := r.Render(md)
+	if err != nil {
+		return md
+	}
+	return out
+}
+
+// RenderReport renders a titled section with the report body formatted
+// as markdown. Suitable for displaying the final agent output.
+func RenderReport(title, body string) string {
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(reportTitleStyle.Render(title))
+	b.WriteString("\n")
+	b.WriteString(reportDividerStyle.Render(strings.Repeat("─", 60)))
+	b.WriteString("\n")
+	b.WriteString(RenderMarkdown(body))
+	return b.String()
 }

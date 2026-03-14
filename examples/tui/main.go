@@ -86,8 +86,7 @@ func runInteractive(stream *agentsdk.EventStream) {
 		log.Fatalf("Stream error: %v", m.Err())
 	}
 
-	fmt.Println("\n--- Final Report ---")
-	fmt.Println(m.FinalReport())
+	fmt.Print(tui.RenderReport("Final Report", m.FinalReport()))
 }
 
 func runVerbose(stream *agentsdk.EventStream) {
@@ -95,4 +94,6 @@ func runVerbose(stream *agentsdk.EventStream) {
 	if result.Err != nil {
 		log.Fatalf("Stream error: %v", result.Err)
 	}
+
+	fmt.Print(tui.RenderReport("Final Report", result.Text))
 }

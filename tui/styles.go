@@ -33,6 +33,15 @@ var (
 	verboseDelegateMsg = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("11")). // yellow
 				Bold(true)
+
+	reportTitleStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("15")). // white
+				Background(lipgloss.Color("4")).  // blue bg
+				Padding(0, 1)
+
+	reportDividerStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("8")) // gray
 )
 
 const (
