@@ -21,6 +21,13 @@ type AgentConfig struct {
 	MaxIter      int
 	SubAgents    []SubAgentDef
 	Tree         *tree.Tree // optional; auto-created if nil
+
+	// File pipeline configuration.
+	Resolvers  map[string]core.Resolver            // URI scheme → Resolver (e.g. "file", "https", "s3")
+	Extractors map[core.MediaType]core.Extractor    // MediaType → Extractor for non-native types
+
+	// Structured output: if set, constrains final LLM output to this JSON schema.
+	ResponseSchema *core.ParameterSchema
 }
 
 // Agent runs an LLM agent loop with tool execution.
@@ -95,7 +102,7 @@ func (a *Agent) Invoke(ctx context.Context, input []core.Message, branch ...core
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	stream := newEventStream(cancel)
+	stream := newEventStream(ctx, cancel)
 
 	go a.runLoop(ctx, stream, input, b)
 
@@ -188,6 +195,105 @@ func stripConfig(messages []core.Message) []core.Message {
 	return out
 }
 
+// callProvider invokes the LLM, using structured output when available.
+func (a *Agent) callProvider(ctx context.Context, messages []core.Message, tools []core.ToolDef) (<-chan core.Delta, error) {
+	if a.cfg.ResponseSchema != nil && len(tools) == 0 {
+		if sp, ok := a.cfg.Provider.(core.StructuredOutputProvider); ok {
+			return sp.ChatStreamWithSchema(ctx, messages, tools, a.cfg.ResponseSchema)
+		}
+	}
+	return a.cfg.Provider.ChatStream(ctx, messages, tools)
+}
+
+// ── File resolution ──────────────────────────────────────────────────
+
+// resolveFiles walks messages and resolves FileContent blocks with empty Data.
+// For each FileContent, it resolves the URI via scheme-matched Resolver, then
+// checks the provider's ContentNegotiator — if the media type is native, the
+// FileContent is kept; otherwise, it is converted via an Extractor.
+func (a *Agent) resolveFiles(ctx context.Context, messages []core.Message) []core.Message {
+	if len(a.cfg.Resolvers) == 0 {
+		return messages
+	}
+
+	// Determine native content support from the provider.
+	var support core.ContentSupport
+	if cn, ok := a.cfg.Provider.(core.ContentNegotiator); ok {
+		support = cn.ContentSupport()
+	}
+
+	out := make([]core.Message, 0, len(messages))
+	for _, msg := range messages {
+		um, ok := msg.(core.UserMessage)
+		if !ok {
+			out = append(out, msg)
+			continue
+		}
+
+		var replaced []core.UserContent
+		for _, c := range um.Content {
+			fc, ok := c.(core.FileContent)
+			if !ok || len(fc.Data) > 0 {
+				replaced = append(replaced, c)
+				continue
+			}
+
+			// Extract URI scheme.
+			scheme := uriScheme(fc.URI)
+			resolver, found := a.cfg.Resolvers[scheme]
+			if !found {
+				replaced = append(replaced, c) // keep unresolved
+				continue
+			}
+
+			resolved, err := resolver.Resolve(ctx, fc.URI)
+			if err != nil {
+				replaced = append(replaced, c) // keep on error
+				continue
+			}
+
+			fc.Data = resolved.Data
+			if fc.MediaType == "" {
+				fc.MediaType = resolved.MediaType
+			}
+
+			// Check if provider handles this type natively.
+			if support.Supports(fc.MediaType) {
+				replaced = append(replaced, fc)
+				continue
+			}
+
+			// Try to extract to text content blocks.
+			if ext, ok := a.cfg.Extractors[fc.MediaType]; ok {
+				blocks, err := ext.Extract(ctx, fc.Data, fc.MediaType)
+				if err == nil {
+					replaced = append(replaced, blocks...)
+					continue
+				}
+			}
+
+			// Fallback: keep the resolved FileContent.
+			replaced = append(replaced, fc)
+		}
+
+		out = append(out, core.UserMessage{Content: replaced})
+	}
+	return out
+}
+
+// uriScheme extracts the scheme from a URI (e.g. "file" from "file:///path").
+func uriScheme(uri string) string {
+	for i, c := range uri {
+		if c == ':' {
+			return uri[:i]
+		}
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (i > 0 && ((c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'))) {
+			break
+		}
+	}
+	return ""
+}
+
 // ── Run loop ─────────────────────────────────────────────────────────
 
 func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []core.Message, branch core.BranchID) {
@@ -239,6 +345,9 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []core.M
 		// Strip config before sending to LLM or compactor.
 		llmMessages := stripConfig(messages)
 
+		// Resolve file URIs to data.
+		llmMessages = a.resolveFiles(ctx, llmMessages)
+
 		// Compact if configured.
 		if resolved.compactNow || resolved.compactor != nil {
 			if resolved.compactor != nil {
@@ -251,9 +360,9 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []core.M
 
 		// Call LLM + timing.
 		start := time.Now()
-		rx, err := a.cfg.Provider.ChatStream(ctx, llmMessages, toolDefs)
-		if err != nil {
-			stream.send(core.ErrorDelta{Error: err})
+		rx, llmErr := a.callProvider(ctx, llmMessages, toolDefs)
+		if llmErr != nil {
+			stream.send(core.ErrorDelta{Error: llmErr})
 			return
 		}
 
@@ -372,6 +481,41 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 					Error:      results[idx].err,
 				})
 				return
+			}
+
+			// Check for markers — if present, emit MarkerDelta and wait for resolution.
+			if mt, ok := tool.(*core.MarkedTool); ok && len(mt.Markers) > 0 {
+				stream.send(core.MarkerDelta{
+					ToolCallID: tc.ID,
+					ToolName:   tc.Name,
+					Arguments:  tc.Arguments,
+					Markers:    mt.Markers,
+				})
+
+				resCh := stream.awaitResolution(tc.ID)
+				select {
+				case res := <-resCh:
+					if !res.Approved {
+						msg := "rejected"
+						if res.Message != "" {
+							msg = "rejected: " + res.Message
+						}
+						results[idx] = toolResult{
+							toolCallID: tc.ID,
+							err:        msg,
+						}
+						stream.send(core.ToolExecEndDelta{ToolCallID: tc.ID, Error: results[idx].err})
+						return
+					}
+					if res.ModifiedArgs != nil {
+						tc.Arguments = res.ModifiedArgs
+					}
+				case <-ctx.Done():
+					return
+				}
+
+				// Use the inner tool for execution.
+				tool = mt.Inner
 			}
 
 			// Check if this is a sub-agent — if so, forward child deltas.

@@ -82,6 +82,19 @@ type ToolExecEndDelta struct {
 
 func (ToolExecEndDelta) isDelta() {}
 
+// ── Marker deltas ───────────────────────────────────────────────────
+
+// MarkerDelta signals that a tool call requires resolution before execution.
+// The consumer must call EventStream.ResolveMarker to unblock.
+type MarkerDelta struct {
+	ToolCallID string
+	ToolName   string
+	Arguments  map[string]any
+	Markers    []Marker
+}
+
+func (MarkerDelta) isDelta() {}
+
 // ── Terminal deltas ─────────────────────────────────────────────────
 
 // ErrorDelta carries an error from the stream.

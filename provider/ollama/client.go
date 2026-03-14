@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -256,29 +255,3 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, tools [
 	return ch, nil
 }
 
-// ExtractEntities extracts entities and relations from text using the LLM.
-func (c *Client) ExtractEntities(ctx context.Context, text string) ([]ExtractedEntity, []ExtractedRelation, error) {
-	prompt := fmt.Sprintf(`Extract entities and relationships from this text. Return ONLY valid JSON with no extra text:
-{"entities": [{"name": "...", "type": "...", "summary": "..."}],
- "relations": [{"source": "...", "target": "...", "type": "...", "fact": "..."}]}
-
-Text: %s`, text)
-
-	raw, err := c.Generate(ctx, prompt)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	jsonStr := raw
-	if start := strings.Index(raw, "{"); start >= 0 {
-		if end := strings.LastIndex(raw, "}"); end >= start {
-			jsonStr = raw[start : end+1]
-		}
-	}
-
-	var data ExtractedData
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-		return nil, nil, fmt.Errorf("parse extraction response: %w (raw: %s)", err, raw)
-	}
-	return data.Entities, data.Relations, nil
-}

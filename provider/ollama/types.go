@@ -36,8 +36,13 @@ type ToolFunctionParams struct {
 }
 
 type ToolProperty struct {
-	Type        string `json:"type"`
-	Description string `json:"description"`
+	Type        string                  `json:"type"`
+	Description string                  `json:"description,omitempty"`
+	Enum        []string                `json:"enum,omitempty"`
+	Items       *ToolProperty           `json:"items,omitempty"`
+	Properties  map[string]ToolProperty `json:"properties,omitempty"`
+	Required    []string                `json:"required,omitempty"`
+	Default     any                     `json:"default,omitempty"`
 }
 
 type ChatRequest struct {
@@ -77,22 +82,4 @@ type EmbedRequest struct {
 
 type EmbedResponse struct {
 	Embeddings [][]float32 `json:"embeddings"`
-}
-
-type ExtractedEntity struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Summary string `json:"summary"`
-}
-
-type ExtractedRelation struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Type   string `json:"type"`
-	Fact   string `json:"fact"`
-}
-
-type ExtractedData struct {
-	Entities  []ExtractedEntity  `json:"entities"`
-	Relations []ExtractedRelation `json:"relations"`
 }

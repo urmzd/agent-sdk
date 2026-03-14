@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 // ToolDef describes a tool's schema for the LLM.
@@ -19,10 +20,15 @@ type ParameterSchema struct {
 	Properties map[string]PropertyDef
 }
 
-// PropertyDef describes a single parameter property.
+// PropertyDef describes a single parameter property using JSON Schema fields.
 type PropertyDef struct {
-	Type        string
-	Description string
+	Type        string                 `json:"type"`
+	Description string                 `json:"description,omitempty"`
+	Enum        []string               `json:"enum,omitempty"`
+	Items       *PropertyDef           `json:"items,omitempty"`
+	Properties  map[string]PropertyDef `json:"properties,omitempty"`
+	Required    []string               `json:"required,omitempty"`
+	Default     any                    `json:"default,omitempty"`
 }
 
 // Tool is the base interface all tools implement.
@@ -45,8 +51,9 @@ func (t *ToolFunc) Execute(ctx context.Context, args map[string]any) (string, er
 	return t.Fn(ctx, args)
 }
 
-// ToolRegistry holds named tools.
+// ToolRegistry holds named tools. It is safe for concurrent use.
 type ToolRegistry struct {
+	mu    sync.RWMutex
 	tools map[string]Tool
 }
 
@@ -61,17 +68,23 @@ func NewToolRegistry(tools ...Tool) *ToolRegistry {
 
 // Get returns a tool by name.
 func (r *ToolRegistry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	t, ok := r.tools[name]
 	return t, ok
 }
 
 // Register adds a tool to the registry.
 func (r *ToolRegistry) Register(t Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.tools[t.Definition().Name] = t
 }
 
 // Definitions returns all tool definitions.
 func (r *ToolRegistry) Definitions() []ToolDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	defs := make([]ToolDef, 0, len(r.tools))
 	for _, t := range r.tools {
 		defs = append(defs, t.Definition())
@@ -81,7 +94,9 @@ func (r *ToolRegistry) Definitions() []ToolDef {
 
 // Execute runs a tool by name.
 func (r *ToolRegistry) Execute(ctx context.Context, name string, args map[string]any) (string, error) {
+	r.mu.RLock()
 	t, ok := r.tools[name]
+	r.mu.RUnlock()
 	if !ok {
 		return "", fmt.Errorf("%w: %s", ErrToolNotFound, name)
 	}

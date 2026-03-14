@@ -120,11 +120,6 @@ func (a *Adapter) Embed(ctx context.Context, text string) ([]float32, error) {
 	return a.Client.Embed(ctx, text)
 }
 
-// ExtractEntities delegates to the underlying client.
-func (a *Adapter) ExtractEntities(ctx context.Context, text string) ([]ExtractedEntity, []ExtractedRelation, error) {
-	return a.Client.ExtractEntities(ctx, text)
-}
-
 // ── Conversion helpers ──────────────────────────────────────────────
 
 func toOllamaMessages(msgs []core.Message) []ChatMessage {
@@ -202,7 +197,7 @@ func toOllamaTools(defs []core.ToolDef) []Tool {
 	for i, d := range defs {
 		props := make(map[string]ToolProperty, len(d.Parameters.Properties))
 		for k, v := range d.Parameters.Properties {
-			props[k] = ToolProperty{Type: v.Type, Description: v.Description}
+			props[k] = convertProperty(v)
 		}
 		out[i] = Tool{
 			Type: "function",
@@ -218,6 +213,28 @@ func toOllamaTools(defs []core.ToolDef) []Tool {
 		}
 	}
 	return out
+}
+
+// convertProperty recursively converts a core.PropertyDef to an Ollama ToolProperty.
+func convertProperty(p core.PropertyDef) ToolProperty {
+	tp := ToolProperty{
+		Type:        p.Type,
+		Description: p.Description,
+		Enum:        p.Enum,
+		Required:    p.Required,
+		Default:     p.Default,
+	}
+	if p.Items != nil {
+		items := convertProperty(*p.Items)
+		tp.Items = &items
+	}
+	if len(p.Properties) > 0 {
+		tp.Properties = make(map[string]ToolProperty, len(p.Properties))
+		for k, v := range p.Properties {
+			tp.Properties[k] = convertProperty(v)
+		}
+	}
+	return tp
 }
 
 // classifyOllamaError inspects the error to determine if it's transient.

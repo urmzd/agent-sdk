@@ -16,6 +16,13 @@ type NamedProvider interface {
 	Name() string
 }
 
+// StructuredOutputProvider is an optional interface for providers that support
+// constraining LLM output to a JSON schema.
+type StructuredOutputProvider interface {
+	Provider
+	ChatStreamWithSchema(ctx context.Context, messages []Message, tools []ToolDef, schema *ParameterSchema) (<-chan Delta, error)
+}
+
 // ProviderName returns the name of a provider if it implements NamedProvider,
 // otherwise returns "unknown".
 func ProviderName(p Provider) string {
