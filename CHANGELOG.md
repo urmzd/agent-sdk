@@ -17,7 +17,7 @@
 
 ### Features
 
-- **tui**: add bubbletea-based streaming progress UI with spinner, agent tracking, and verbose-mode helpers
+- **tui**: add bubbletea-based streaming progress UI with spinner, agent tracking, verbose-mode helpers, and non-interactive `StreamVerbose` consumer
 
 ## 0.4.0 (2026-03-14)
 

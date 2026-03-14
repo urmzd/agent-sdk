@@ -858,7 +858,28 @@ embedder, err := gemini.NewEmbedder(ctx, apiKey, "text-embedding-004")
 
 ## TUI
 
-The `tui` package provides a bubbletea-based progress UI for streaming agent deltas. It tracks sub-agent tool executions with spinners and status icons, accumulates the final coordinator text, and provides verbose-mode formatting helpers for non-TTY / debug output.
+The `tui` package provides two modes for displaying streaming agent progress:
+
+### Non-Interactive (Verbose) Mode
+
+Works in any terminal, pipe, or CI environment — no TTY required:
+
+```go
+import "github.com/urmzd/agent-sdk/tui"
+
+stream := agent.Invoke(ctx, messages)
+result := tui.StreamVerbose("My Agent", stream.Deltas(), os.Stdout)
+if result.Err != nil {
+    log.Fatal(result.Err)
+}
+fmt.Println(result.Text) // accumulated coordinator output
+```
+
+`StreamVerbose` prints styled delegation events, sub-agent output, token usage, and coordinator text as deltas arrive. Pass `nil` for the writer to default to `os.Stdout`.
+
+### Interactive (Bubbletea) Mode
+
+Full TUI with spinners and live-updating status — requires an interactive terminal:
 
 ```go
 import (
@@ -877,14 +898,13 @@ if err != nil {
 
 m := finalModel.(tui.StreamModel)
 fmt.Println(m.FinalReport())
-if m.Err() != nil {
-    log.Fatal(m.Err())
-}
 ```
 
 **Pipeline stages:** Initializing → Analyzing (sub-agents running) → Synthesizing (final report) → Done
 
-**Verbose-mode helpers** for non-TTY output:
+### Verbose Formatting Helpers
+
+Individual formatters for building custom non-interactive output:
 
 | Function | Purpose |
 |----------|---------|
@@ -968,7 +988,7 @@ fmt.Println(mock.Calls)        // recorded argument maps
 
 ## Examples
 
-Five runnable examples are in `examples/`:
+Six runnable examples are in `examples/`:
 
 | Example | Path | Description |
 |---------|------|-------------|
@@ -977,12 +997,15 @@ Five runnable examples are in `examples/`:
 | Resilient | `examples/resilient/` | Retry + fallback provider composition |
 | Streaming | `examples/streaming/` | All delta types with ANSI color output |
 | Multimodal | `examples/multimodal/` | File pipeline with a `file://` resolver |
+| TUI | `examples/tui/` | Interactive and non-interactive progress UI |
 
 Run any example:
 
 ```bash
 go run ./examples/basic/
 go run ./examples/multimodal/ /path/to/image.png
+go run ./examples/tui/              # non-interactive verbose mode
+go run ./examples/tui/ -interactive # interactive bubbletea mode
 ```
 
 ## Architecture

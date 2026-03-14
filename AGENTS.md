@@ -70,7 +70,7 @@ Go module: `github.com/urmzd/agent-sdk`. Go 1.25+. Dependencies: `github.com/goo
 
 | File | Role |
 |------|------|
-| `tui/stream.go` | `StreamModel` — bubbletea model consuming a delta channel. Tracks sub-agent tool executions with pipeline stages (Initializing → Analyzing → Synthesizing → Done). Verbose-mode formatting helpers: `FormatDelegateStart`, `FormatAgentOutput`, `FormatAgentDone`, `FormatAgentError` |
+| `tui/stream.go` | `StreamModel` — bubbletea model consuming a delta channel. Tracks sub-agent tool executions with pipeline stages (Initializing → Analyzing → Synthesizing → Done). `StreamVerbose` — non-interactive streaming consumer (no TTY required). Verbose formatting helpers: `FormatDelegateStart`, `FormatAgentOutput`, `FormatAgentDone`, `FormatAgentError` |
 | `tui/styles.go` | Lipgloss styles and icon constants for the TUI |
 
 ### `agenttest/` Package
@@ -88,6 +88,7 @@ Go module: `github.com/urmzd/agent-sdk`. Go 1.25+. Dependencies: `github.com/goo
 | `examples/resilient/` | Retry + fallback provider composition |
 | `examples/streaming/` | All delta types with ANSI color terminal output |
 | `examples/multimodal/` | File pipeline with a `file://` resolver and content negotiation |
+| `examples/tui/` | Interactive bubbletea TUI and non-interactive verbose streaming |
 
 ## Key Interfaces
 

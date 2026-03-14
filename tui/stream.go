@@ -6,6 +6,8 @@ package tui
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -269,4 +271,68 @@ func FormatAgentDone(name string) string {
 // FormatAgentError formats an agent error message for verbose mode.
 func FormatAgentError(name, errMsg string) string {
 	return statusError.Render(fmt.Sprintf(">> %s error: %s", name, errMsg))
+}
+
+// ── Non-interactive streaming ───────────────────────────────────────
+
+// VerboseResult holds the outcome of a StreamVerbose run.
+type VerboseResult struct {
+	Text string // accumulated coordinator text output
+	Err  error  // first error encountered, if any
+}
+
+// StreamVerbose consumes deltas from ch and writes styled progress output
+// to w. It does not require an interactive terminal. If w is nil, os.Stdout
+// is used. Returns the accumulated text output and any error.
+func StreamVerbose(title string, ch <-chan core.Delta, w io.Writer) VerboseResult {
+	if w == nil {
+		w = os.Stdout
+	}
+
+	fmt.Fprintln(w, titleStyle.Render(title))
+	fmt.Fprintln(w)
+
+	agentNames := map[string]string{} // toolCallID → name
+	var text strings.Builder
+
+	for delta := range ch {
+		switch d := delta.(type) {
+		case core.ToolExecStartDelta:
+			agentNames[d.ToolCallID] = d.Name
+			fmt.Fprintln(w, FormatDelegateStart(d.Name))
+
+		case core.ToolExecDelta:
+			if inner, ok := d.Inner.(core.TextContentDelta); ok {
+				name := agentNames[d.ToolCallID]
+				fmt.Fprint(w, FormatAgentOutput(name, inner.Content))
+			}
+
+		case core.ToolExecEndDelta:
+			name := agentNames[d.ToolCallID]
+			if d.Error != "" {
+				fmt.Fprintln(w, FormatAgentError(name, d.Error))
+			} else {
+				fmt.Fprintln(w, FormatAgentDone(name))
+			}
+
+		case core.TextContentDelta:
+			text.WriteString(d.Content)
+			fmt.Fprint(w, d.Content)
+
+		case core.UsageDelta:
+			fmt.Fprintf(w, "\n%s\n", stageStyle.Render(
+				fmt.Sprintf("[%d prompt + %d completion tokens, %s]",
+					d.PromptTokens, d.CompletionTokens, d.Latency)))
+
+		case core.ErrorDelta:
+			fmt.Fprintln(w, statusError.Render(fmt.Sprintf("Error: %v", d.Error)))
+			return VerboseResult{Text: text.String(), Err: d.Error}
+
+		case core.DoneDelta:
+			fmt.Fprintln(w)
+			return VerboseResult{Text: text.String()}
+		}
+	}
+
+	return VerboseResult{Text: text.String()}
 }
