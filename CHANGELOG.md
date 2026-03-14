@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0 (2026-03-14)
+
+### Features
+
+- **tui**: add bubbletea-based streaming progress UI ([41ec910](https://github.com/urmzd/agent-sdk/commit/41ec9105cba903d8e762b81774bdc5fbdfec4723))
+
+### Refactoring
+
+- **openai**: stop leaking SDK option type in public API ([ea4bd3c](https://github.com/urmzd/agent-sdk/commit/ea4bd3c557dc57f9990e3392bb0b92e981a51760))
+
+[Full Changelog](https://github.com/urmzd/agent-sdk/compare/v0.4.0...v0.5.0)
+
+
 ## Unreleased
 
 ### Features
