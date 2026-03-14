@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0 (2026-03-14)
+
+### Features
+
+- add OpenAI, Anthropic, Gemini providers, markers, structured output, file pipeline, and testing utilities ([6a694b2](https://github.com/urmzd/agent-sdk/commit/6a694b240a987224455262e713db1a3051544f81))
+
+### Documentation
+
+- rewrite README and AGENTS for accuracy and usability ([b03c7e6](https://github.com/urmzd/agent-sdk/commit/b03c7e6ad485f2a2e311f756b9e2af1b39771579))
+
+[Full Changelog](https://github.com/urmzd/agent-sdk/compare/v0.3.0...v0.4.0)
+
+
 ## 0.3.0 (2026-03-13)
 
 ### Features
