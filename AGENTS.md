@@ -2,11 +2,11 @@
 
 ## Identity
 
-You are an agent working on **agent-sdk** — a strongly-typed Go SDK for building streaming LLM agent loops. The SDK provides typed deltas (LLM-side, execution-side, marker, metadata), sealed message types (system, user, assistant), parallel tool execution, sub-agent delegation with delta streaming, a branching conversation tree, runtime configuration via the tree, provider resilience (retry + fallback), structured errors, session replay, file upload with content negotiation and a configurable file resolution pipeline, vector embeddings, human-in-the-loop markers, structured output via `StructuredOutputProvider`, and testing utilities (`agenttest`). Four provider adapters are included: Ollama, OpenAI, Anthropic, and Gemini.
+You are an agent working on **agent-sdk** — a strongly-typed Go SDK for building streaming LLM agent loops. The SDK provides typed deltas (LLM-side, execution-side, marker, metadata), sealed message types (system, user, assistant), parallel tool execution, sub-agent delegation with delta streaming, a branching conversation tree, runtime configuration via the tree, provider resilience (retry + fallback), structured errors, session replay, file upload with content negotiation and a configurable file resolution pipeline, vector embeddings, human-in-the-loop markers, structured output via `StructuredOutputProvider`, a bubbletea-based TUI for streaming progress, and testing utilities (`agenttest`). Four provider adapters are included: Ollama, OpenAI, Anthropic, and Gemini.
 
 ## Architecture
 
-Go module: `github.com/urmzd/agent-sdk`. Go 1.25+. Dependencies: `github.com/google/uuid`, `github.com/openai/openai-go/v3`, `github.com/anthropics/anthropic-sdk-go`, `google.golang.org/genai`.
+Go module: `github.com/urmzd/agent-sdk`. Go 1.25+. Dependencies: `github.com/google/uuid`, `github.com/openai/openai-go/v3`, `github.com/anthropics/anthropic-sdk-go`, `google.golang.org/genai`, `github.com/charmbracelet/bubbletea`, `github.com/charmbracelet/bubbles`, `github.com/charmbracelet/lipgloss`.
 
 ### Root Package (`agentsdk`)
 
@@ -65,6 +65,13 @@ Go module: `github.com/urmzd/agent-sdk`. Go 1.25+. Dependencies: `github.com/goo
 | Package | Role |
 |---------|------|
 | `store/memwal/` | In-memory WAL implementation |
+
+### `tui/` Package
+
+| File | Role |
+|------|------|
+| `tui/stream.go` | `StreamModel` — bubbletea model consuming a delta channel. Tracks sub-agent tool executions with pipeline stages (Initializing → Analyzing → Synthesizing → Done). Verbose-mode formatting helpers: `FormatDelegateStart`, `FormatAgentOutput`, `FormatAgentDone`, `FormatAgentError` |
+| `tui/styles.go` | Lipgloss styles and icon constants for the TUI |
 
 ### `agenttest/` Package
 

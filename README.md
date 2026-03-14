@@ -92,6 +92,7 @@ func main() {
 - [OpenAI Adapter](#openai-adapter)
 - [Anthropic Adapter](#anthropic-adapter)
 - [Gemini Adapter](#gemini-adapter)
+- [TUI](#tui)
 - [Testing](#testing)
 - [Examples](#examples)
 - [Architecture](#architecture)
@@ -855,6 +856,43 @@ For embeddings:
 embedder, err := gemini.NewEmbedder(ctx, apiKey, "text-embedding-004")
 ```
 
+## TUI
+
+The `tui` package provides a bubbletea-based progress UI for streaming agent deltas. It tracks sub-agent tool executions with spinners and status icons, accumulates the final coordinator text, and provides verbose-mode formatting helpers for non-TTY / debug output.
+
+```go
+import (
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/urmzd/agent-sdk/tui"
+)
+
+stream := agent.Invoke(ctx, messages)
+model := tui.NewStreamModel("My Agent", stream.Deltas())
+
+p := tea.NewProgram(model)
+finalModel, err := p.Run()
+if err != nil {
+    log.Fatal(err)
+}
+
+m := finalModel.(tui.StreamModel)
+fmt.Println(m.FinalReport())
+if m.Err() != nil {
+    log.Fatal(m.Err())
+}
+```
+
+**Pipeline stages:** Initializing → Analyzing (sub-agents running) → Synthesizing (final report) → Done
+
+**Verbose-mode helpers** for non-TTY output:
+
+| Function | Purpose |
+|----------|---------|
+| `FormatDelegateStart(name)` | Format delegation start message |
+| `FormatAgentOutput(name, content)` | Format sub-agent streaming output |
+| `FormatAgentDone(name)` | Format delegation completion message |
+| `FormatAgentError(name, errMsg)` | Format agent error message |
+
 ## Testing
 
 ```bash
@@ -978,5 +1016,6 @@ go run ./examples/multimodal/ /path/to/image.png
 | `provider/openai/` | OpenAI adapter (Provider, NamedProvider, StructuredOutputProvider, ContentNegotiator, Embedder) |
 | `provider/anthropic/` | Anthropic adapter (Provider, NamedProvider, ContentNegotiator) |
 | `provider/gemini/` | Gemini adapter (Provider, NamedProvider, ContentNegotiator, Embedder) |
+| `tui/` | Bubbletea-based streaming progress UI with spinner, agent tracking, and verbose-mode helpers |
 | `agenttest/` | `ScriptedProvider`, `MockTool`, assertion helpers for unit tests |
 | `examples/` | Runnable examples: basic, subagents, resilient, streaming, multimodal |
